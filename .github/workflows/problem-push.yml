@@ -1,0 +1,63 @@
+name: 問題を yukicoder に反映
+
+# main に入った内容を yukicoder に反映する。リポジトリが正で、last-write-wins。
+# WebUI 側で直接編集した内容は、ここで上書きされる。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "problems/**"
+      - "yukicoder.toml"
+  workflow_dispatch:
+    inputs:
+      prune:
+        description: "ローカルに無いテストケースを yukicoder から削除する"
+        type: boolean
+        default: false
+      dry_run:
+        description: "送信内容を表示するだけで反映しない"
+        type: boolean
+        default: false
+
+concurrency:
+  # 反映は last-write-wins なので、同時に走らせない。
+  group: yukicoder-push
+  cancel-in-progress: false
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust をセットアップ
+        run: rustup toolchain install stable --profile minimal
+
+      - name: 依存とビルド結果をキャッシュ
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - run: cargo build --release
+
+      - name: 反映する
+        env:
+          YUKICODER_TOKEN: ${{ secrets.YUKICODER_TOKEN }}
+        run: |
+          args=(push --all)
+          if [ "${{ inputs.prune }}" = "true" ]; then args+=(--prune); fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then args+=(--dry-run); fi
+          ./target/release/yuki "${args[@]}" | tee push.txt
+          {
+            echo "## yukicoder への反映"
+            echo
+            echo '```'
+            cat push.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

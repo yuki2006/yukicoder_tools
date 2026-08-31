@@ -1,0 +1,5 @@
+# 問題文もテストケースも LF で扱う。CRLF が混ざると push のたびに差分が出る。
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary

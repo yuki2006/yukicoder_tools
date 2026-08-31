@@ -1,0 +1,54 @@
+name: 問題の差分チェック
+
+# PR で problems/ を触ったとき、yukicoder 側との差分をジョブサマリに出す。
+# 差分があること自体は失敗にしない (PR は「これから反映する変更」なので)。
+# 落とすのは、設定ファイルが壊れているなど yuki 自体がエラーになった場合だけ。
+
+on:
+  pull_request:
+    paths:
+      - "problems/**"
+      - "yukicoder.toml"
+
+jobs:
+  diff:
+    # フォークからの PR には Secrets が渡らないので実行しない。
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust をセットアップ
+        run: rustup toolchain install stable --profile minimal
+
+      - name: 依存とビルド結果をキャッシュ
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - run: cargo build --release
+
+      - name: 差分を出す
+        env:
+          YUKICODER_TOKEN: ${{ secrets.YUKICODER_TOKEN }}
+        run: |
+          set -o pipefail
+          status=0
+          ./target/release/yuki diff --all --exit-code > diff.txt 2>&1 || status=$?
+          {
+            echo "## yukicoder との差分"
+            echo
+            echo '```diff'
+            cat diff.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat diff.txt
+          # 2 = 差分あり (想定内)。それ以外の非ゼロは実行時エラー。
+          if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
+            exit "$status"
+          fi

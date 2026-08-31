@@ -1,0 +1,7 @@
+/target
+Cargo.lock.orig
+
+# トークンを置く場所。絶対にコミットしない。
+.env
+.env.*
+!.env.example

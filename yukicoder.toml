@@ -1,0 +1,3 @@
+problems = [13954]
+problems_dir = "problems"
+base_url = "https://yukicoder.me/api"
