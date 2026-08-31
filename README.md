@@ -65,7 +65,6 @@ problems/<問題ID>/
   problem.toml              問題設定 (キー名は API と同じ camelCase)
   statement.md              問題文。HTML で管理する問題は statement.html
   editorial.md              解説 (任意)。HTML なら editorial.html
-  editorial_urls.txt        解説の外部URL一覧 (参照用。push では送らない)
   judge/
     judge.toml              スペシャルジャッジのジャッジコードの設定 (langId / sourceFile)
     <sourceFile>            ジャッジコードのソース

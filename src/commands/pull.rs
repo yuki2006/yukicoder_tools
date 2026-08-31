@@ -107,9 +107,6 @@ pub fn pull_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> 
             "  解説 -> {}",
             display_path(dir.editorial_path(statement.is_markdown()))
         );
-        if !editorial.url_table.trim().is_empty() {
-            crate::local::write_text(&dir.editorial_urls_path(), &editorial.url_table)?;
-        }
     } else {
         println!(
             "  解説: ローカルに {} が無いので取得しません",

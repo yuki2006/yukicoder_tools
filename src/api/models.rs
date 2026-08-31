@@ -231,9 +231,6 @@ pub struct EditorialContent {
     pub content: String,
     #[serde(default)]
     pub is_markdown: bool,
-    /// 外部 URL の一覧。「userId,URL」の行形式。
-    #[serde(default)]
-    pub url_table: String,
 }
 
 /// `PUT /v1/problems/{id}/editorial` のリクエスト。
@@ -246,22 +243,15 @@ pub struct EditorialRequest {
     pub html: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub markdown: Option<String>,
-    /// 外部 URL の *追記*。既存分に足されるので、通常は送らない。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url_table: Option<String>,
 }
 
 impl EditorialRequest {
-    pub fn new(statement: Statement, url_table: Option<String>) -> anyhow::Result<Self> {
+    pub fn new(statement: Statement) -> anyhow::Result<Self> {
         if statement.text().trim().is_empty() {
             anyhow::bail!("解説が空です。空のまま送ると保存済みの解説が消えるので中止します。");
         }
         let (html, markdown) = statement.into_fields();
-        Ok(Self {
-            html,
-            markdown,
-            url_table,
-        })
+        Ok(Self { html, markdown })
     }
 }
 
@@ -370,7 +360,7 @@ mod tests {
     #[test]
     fn empty_statement_is_rejected() {
         assert!(ProblemEditRequest::new(settings(), Statement::Markdown("  \n".into())).is_err());
-        assert!(EditorialRequest::new(Statement::Html(String::new()), None).is_err());
+        assert!(EditorialRequest::new(Statement::Html(String::new())).is_err());
     }
 
     /// 読み取り専用キーは送らない。未知のフィールドはサーバでエラーになる。

@@ -5,7 +5,6 @@
 //!   problem.toml            問題設定 (キー名は API と同じ)
 //!   statement.md            問題文 (HTML で管理する問題は statement.html)
 //!   editorial.md            解説 (HTML なら editorial.html)。無ければ触らない
-//!   editorial_urls.txt      解説の外部URL一覧 (参照用。push では送らない)
 //!   judge/
 //!     judge.toml            スペシャルジャッジのジャッジコードの設定
 //!     <sourceFile>          ジャッジコードのソース
@@ -30,7 +29,6 @@ use crate::api::models::{ProblemSettings, Statement, Which};
 pub const SETTINGS_FILE: &str = "problem.toml";
 pub const GENERATOR_CONFIG_FILE: &str = "generator.toml";
 pub const JUDGE_CONFIG_FILE: &str = "judge.toml";
-pub const EDITORIAL_URLS_FILE: &str = "editorial_urls.txt";
 
 /// `judge/judge.toml`。スペシャルジャッジのジャッジコードの設定。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,10 +136,6 @@ impl ProblemDir {
         } else {
             "editorial.html"
         })
-    }
-
-    pub fn editorial_urls_path(&self) -> PathBuf {
-        self.root.join(EDITORIAL_URLS_FILE)
     }
 
     pub fn has_editorial(&self) -> bool {

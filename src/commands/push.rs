@@ -94,10 +94,11 @@ fn push_one(client: &YukicoderClient, dir: &ProblemDir, options: Options) -> Res
     }
 
     // ---- 解説 ----
-    // url_table は「追記」なので送らない。既存分と重複させないため。
+    // 外部URL一覧 (urlTable) は送らない。PUT では既存分に追記されるだけで置換
+    // できず、毎回送ると同じ行が増えるため。登録は WebUI で行う。
     if dir.has_editorial() {
         let editorial = dir.read_editorial()?;
-        let request = EditorialRequest::new(editorial, None)?;
+        let request = EditorialRequest::new(editorial)?;
         if options.dry_run {
             println!(
                 "  PUT /v1/problems/{problem_id}/editorial ({} で {} バイト)",
