@@ -1,0 +1,78 @@
+name: yukicoder の変更を取り込む
+
+# WebUI で問題を直接編集すると、リポジトリと yukicoder がずれる。
+# 定期的に pull して、差分があれば PR を作る (反映の逆方向)。
+#
+# push の workflow は last-write-wins なので、ずれたまま main に何か入ると
+# WebUI 側の編集が消える。それを防ぐための入口。
+
+on:
+  schedule:
+    # 毎日 09:00 JST (00:00 UTC)
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: yukicoder-pull
+  cancel-in-progress: true
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust をセットアップ
+        run: rustup toolchain install stable --profile minimal
+
+      - name: 依存とビルド結果をキャッシュ
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - run: cargo build --release
+
+      - name: yukicoder から取得する
+        env:
+          YUKICODER_TOKEN: ${{ secrets.YUKICODER_TOKEN }}
+        run: ./target/release/yuki pull --all
+
+      - name: 差分があるか確認する
+        id: check
+        run: |
+          # 新しく増えたファイルも見たいので、diff ではなく status で判定する。
+          if [ -z "$(git status --porcelain -- problems)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "リポジトリと yukicoder は一致しています。"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --short -- problems
+          fi
+
+      - name: 取り込む PR を作る
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ github.ref_name }}
+        run: |
+          branch="sync/yukicoder-$(date +%Y%m%d-%H%M%S)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add problems
+          git commit -m "yukicoder 側の変更を取り込む"
+          git push origin "$branch"
+          gh pr create \
+            --title "yukicoder 側の変更を取り込む" \
+            --body "yukicoder 側にあってリポジトリに無い変更を \`yuki pull\` で取り込みました。マージするとリポジトリが yukicoder に追いつきます。" \
+            --base "$BASE_BRANCH" \
+            --head "$branch"
