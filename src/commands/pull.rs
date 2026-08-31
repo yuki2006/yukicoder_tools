@@ -72,10 +72,10 @@ pub fn pull_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> 
         );
     }
 
-    // ジャッジコード (スペシャルジャッジ)。API がまだ生えていないサーバでは
-    // None が返るので、その場合はほかの同期を止めずに知らせるだけにする。
+    // ジャッジコード (スペシャルジャッジ)。この API を持たないサーバでは None が
+    // 返るので、その場合はほかの同期を止めずに知らせるだけにする。
     match client.get_judge_code(problem_id)? {
-        None => println!("  ジャッジコード: この API はまだ使えません (サーバ側が未対応)"),
+        None => println!("  ジャッジコード: このサーバはジャッジコードの API に対応していません"),
         Some(code) if code.source.trim().is_empty() => println!("  ジャッジコード: 未登録"),
         Some(code) => {
             let source_file = existing_judge_source_file(dir)

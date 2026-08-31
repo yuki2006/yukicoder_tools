@@ -218,7 +218,7 @@ pub const JUDGE_STATUS_COMPILE_ERROR: &str = "CE";
 ///
 /// 確定するのは `AC` と `CE` だけ。`WJ` (待機) と `Judge` (コンパイル中) は
 /// 途中の状態で、空文字列は未登録。**確定していない値を失敗として扱わないこと。**
-/// 実測で `WJ` → `Judge` → `AC` と遷移するのを確認している。
+/// `WJ` → `Judge` → `AC` と遷移する。
 pub fn judge_status_is_final(status: &str) -> bool {
     status == JUDGE_STATUS_OK || status == JUDGE_STATUS_COMPILE_ERROR
 }

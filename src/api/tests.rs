@@ -97,10 +97,10 @@ fn serve_once(status: u16, payload: &'static str) -> (String, JoinHandle<()>) {
     (format!("http://{addr}"), handle)
 }
 
-/// ジャッジコードの API がまだ無いサーバでは、404 を「未対応」として扱う。
+/// ジャッジコードの API を持たないサーバでは、404 を「未対応」として扱う。
 /// ここでエラーにすると pull 全体が止まってしまう。
 #[test]
-fn judge_code_is_none_while_the_api_is_missing() {
+fn judge_code_is_none_when_the_api_is_missing() {
     let (base_url, server) = serve_once(404, "Not Found");
     let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
 
@@ -156,7 +156,6 @@ fn uses_put_for_writes() {
 
 /// PUT が通らないときに POST で送り直したりしないこと。
 ///
-/// 以前は移行期間のフォールバックがあったが、サーバから POST の経路は削除された。
 /// 黙って別のメソッドで送り直すと、原因の分からない失敗になる。
 #[test]
 fn does_not_retry_with_another_method() {

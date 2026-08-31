@@ -128,8 +128,7 @@ impl YukicoderClient {
 
     /// 書き込み系 API を呼ぶ。
     ///
-    /// 書き込みはすべて PUT。以前は POST だったが、サーバ側から POST の経路は
-    /// 削除されている (実測で 404)。
+    /// 書き込みはすべて PUT。
     fn put_json<B: Serialize, T: DeserializeOwned>(
         &self,
         path: &str,
@@ -197,8 +196,8 @@ impl YukicoderClient {
 
     /// ジャッジコードを取得する。
     ///
-    /// この API はサーバへの反映が済むまで存在しない。まだ生えていない
-    /// (404) ときは `None` を返し、他の同期を止めない。
+    /// この API を持たないサーバでは 404 が返る。その場合は `None` を返し、
+    /// ほかの同期を止めない。
     pub fn get_judge_code(&self, problem_id: i64) -> Result<Option<JudgeCodeContent>> {
         let path = format!("/v1/problems/{problem_id}/code");
         let res = self

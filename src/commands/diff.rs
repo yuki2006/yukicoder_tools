@@ -86,7 +86,7 @@ fn diff_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> Resu
     if dir.has_judge_code() {
         let (config, source) = dir.read_judge_code()?;
         match client.get_judge_code(problem_id)? {
-            None => println!("ジャッジコード: この API はまだ使えません (サーバ側が未対応)"),
+            None => println!("ジャッジコード: このサーバはジャッジコードの API に対応していません"),
             Some(remote) => {
                 if remote.lang_id != config.lang_id {
                     differs = true;
