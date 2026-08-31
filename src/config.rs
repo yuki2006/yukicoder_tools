@@ -174,28 +174,50 @@ pub fn load_dotenv(path: &Path) -> Result<HashMap<String, String>> {
 /// それぞれ環境変数を先に見て、無ければ `.env` を見る。既定値は持たない。
 pub fn resolve_token(repo_root: &Path, problem_id: i64) -> Result<String> {
     let dotenv = load_dotenv(&repo_root.join(DOTENV_FILE))?;
-    let keys = [
-        format!("YUKICODER_TOKEN_{problem_id}"),
-        "YUKICODER_TOKEN".to_string(),
-        "YUKICODER_API_KEY".to_string(),
-    ];
-    for key in &keys {
-        if let Ok(value) = std::env::var(key) {
-            if !value.trim().is_empty() {
-                return Ok(value.trim().to_string());
-            }
-        }
-        if let Some(value) = dotenv.get(key) {
-            if !value.trim().is_empty() {
-                return Ok(value.trim().to_string());
-            }
-        }
+    let keys = token_keys(problem_id);
+    if let Some(token) = select_token(&keys, |key| std::env::var(key).ok(), &dotenv) {
+        return Ok(token);
     }
     bail!(
         "トークンが見つかりません。次のいずれかを環境変数か {DOTENV_FILE} に設定してください: {}\n\
          GitHub Actions では Secrets を env に渡してください (例: YUKICODER_TOKEN: ${{{{ secrets.YUKICODER_TOKEN }}}})。",
         keys.join(", ")
     )
+}
+
+/// 探すキーを優先順に並べる。
+///
+/// 問題ごとのキーを先頭に置くので、`.env` に複数の問題の編集トークンを並べて
+/// 書ける。編集トークンは 1 つの問題にしか使えないため、複数の問題を扱うなら
+/// この形になる。
+fn token_keys(problem_id: i64) -> Vec<String> {
+    vec![
+        format!("YUKICODER_TOKEN_{problem_id}"),
+        "YUKICODER_TOKEN".to_string(),
+        "YUKICODER_API_KEY".to_string(),
+    ]
+}
+
+/// キーを順に見て、最初に見つかった空でない値を返す。
+///
+/// 同じキーなら環境変数が `.env` より優先される (CI の Secrets を効かせるため)。
+fn select_token(
+    keys: &[String],
+    from_env: impl Fn(&str) -> Option<String>,
+    dotenv: &HashMap<String, String>,
+) -> Option<String> {
+    for key in keys {
+        for value in [from_env(key), dotenv.get(key).cloned()]
+            .into_iter()
+            .flatten()
+        {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -243,6 +265,99 @@ mod tests {
         let path = write(&dir, ".env.broken", "YUKICODER_TOKEN\n");
         assert!(load_dotenv(&path).is_err());
         fs::remove_file(path).unwrap();
+    }
+
+    /// `.env` に複数の問題の編集トークンを並べられること。
+    ///
+    /// 編集トークンは 1 つの問題にしか使えないので、問題ごとのキーが
+    /// 汎用のキーより先に効かないと、複数の問題を扱えない。
+    #[test]
+    fn per_problem_tokens_live_side_by_side() {
+        let dotenv: HashMap<String, String> = [
+            ("YUKICODER_TOKEN_13954", "ypt_for_13954"),
+            ("YUKICODER_TOKEN_20000", "ypt_for_20000"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let no_env = |_: &str| None;
+
+        assert_eq!(
+            select_token(&token_keys(13954), no_env, &dotenv).unwrap(),
+            "ypt_for_13954"
+        );
+        assert_eq!(
+            select_token(&token_keys(20000), no_env, &dotenv).unwrap(),
+            "ypt_for_20000"
+        );
+        // どちらのキーも無い問題は、汎用のキーが無ければ解決できない。
+        assert!(select_token(&token_keys(99999), no_env, &dotenv).is_none());
+    }
+
+    /// 問題ごとのキーは汎用のキーより優先される。
+    #[test]
+    fn per_problem_token_wins_over_the_shared_one() {
+        let dotenv: HashMap<String, String> = [
+            ("YUKICODER_TOKEN_13954", "ypt_for_13954"),
+            ("YUKICODER_TOKEN", "ypt_shared"),
+            ("YUKICODER_API_KEY", "account_key"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let no_env = |_: &str| None;
+
+        assert_eq!(
+            select_token(&token_keys(13954), no_env, &dotenv).unwrap(),
+            "ypt_for_13954"
+        );
+        // 個別のキーが無ければ汎用のキー、それも無ければ API キー。
+        assert_eq!(
+            select_token(&token_keys(20000), no_env, &dotenv).unwrap(),
+            "ypt_shared"
+        );
+        let only_api_key: HashMap<String, String> =
+            [("YUKICODER_API_KEY".to_string(), "account_key".to_string())]
+                .into_iter()
+                .collect();
+        assert_eq!(
+            select_token(&token_keys(20000), no_env, &only_api_key).unwrap(),
+            "account_key"
+        );
+    }
+
+    /// 同じキーなら環境変数が `.env` に勝つ。CI の Secrets を効かせるため。
+    #[test]
+    fn environment_wins_over_dotenv() {
+        let dotenv: HashMap<String, String> = [(
+            "YUKICODER_TOKEN_13954".to_string(),
+            "ypt_from_dotenv".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let from_env =
+            |key: &str| (key == "YUKICODER_TOKEN_13954").then(|| "ypt_from_env".to_string());
+
+        assert_eq!(
+            select_token(&token_keys(13954), from_env, &dotenv).unwrap(),
+            "ypt_from_env"
+        );
+    }
+
+    /// 空の値は「設定されていない」として次のキーへ進む。
+    #[test]
+    fn empty_values_are_skipped() {
+        let dotenv: HashMap<String, String> = [
+            ("YUKICODER_TOKEN_13954".to_string(), "   ".to_string()),
+            ("YUKICODER_TOKEN".to_string(), "ypt_shared".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(
+            select_token(&token_keys(13954), |_| Some(String::new()), &dotenv).unwrap(),
+            "ypt_shared"
+        );
     }
 
     #[test]

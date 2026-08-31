@@ -41,6 +41,19 @@ cargo build --release
 それぞれ、環境変数を先に見て、無ければリポジトリ直下の `.env` を見ます
 (GitHub Actions の Secrets が `.env` より優先されます)。どれも無ければエラーで止まります。
 
+編集トークンは発行元の問題にしか使えないので、**複数の問題を扱うときは問題ごとに並べて書きます**。
+`pull` / `push` / `diff` は問題ごとにトークンを解決するので、`--all` でも各問題に対応する
+トークンが使われます。
+
+```sh
+# .env
+YUKICODER_TOKEN_13954=ypt_...
+YUKICODER_TOKEN_20000=ypt_...
+```
+
+アカウントの API キー (`YUKICODER_API_KEY`) を使えば、作者・テスターであるすべての問題を
+1 つの値で扱えます。問題ごとのトークンを用意しなくて済みますが、権限は広くなります。
+
 ローカルでは `.env.example` を `.env` にコピーして使ってください。`.env` は `.gitignore` 済みです。
 GitHub Actions では Secrets に `YUKICODER_TOKEN` を登録し、ジョブの `env` に渡します。
 
