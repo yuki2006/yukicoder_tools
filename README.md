@@ -108,8 +108,8 @@ problems/<問題ID>/
   フォークからの PR には Secrets が渡らないので実行しない
 - `problem-push.yml` — main に入ったら `yuki push --all` で反映する。
   `workflow_dispatch` から `--prune` / `--dry-run` も選べる
-- `problem-pull.yml` — 毎日 (と手動で) `yuki pull --all` し、yukicoder 側に
-  リポジトリと違う内容があれば取り込む PR を作る
+- `problem-pull.yml` — 手動で `yuki pull --all` し、yukicoder 側にリポジトリと違う
+  内容があれば取り込む PR を作る (定期実行はしない)
 
 反映は last-write-wins です。WebUI 側で直接編集した内容は push で上書きされます。
 WebUI で編集したときは、`problem-pull.yml` が作る PR を先にマージしてください。

@@ -97,9 +97,8 @@ main にマージされると `problem-push.yml` が動き、yukicoder へ反映
 
 ## 4. WebUI で編集してしまったら
 
-`problem-pull.yml` が毎日 09:00 JST に走り、yukicoder 側にあってリポジトリに無い変更が
-あれば取り込む PR を作ります。**Actions → yukicoder の変更を取り込む → Run workflow** で
-すぐ実行することもできます。
+**Actions → yukicoder の変更を取り込む → Run workflow** を実行してください。
+yukicoder 側にあってリポジトリに無い変更を取り込む PR ができます。定期実行はしません。
 
 この PR をマージしてからリポジトリ側の編集を進めてください。ずれたまま main に何か入ると、
 `problem-push.yml` が WebUI 側の編集を上書きします。

@@ -1,15 +1,14 @@
 name: yukicoder の変更を取り込む
 
 # WebUI で問題を直接編集すると、リポジトリと yukicoder がずれる。
-# 定期的に pull して、差分があれば PR を作る (反映の逆方向)。
+# pull して差分があれば PR を作る (反映の逆方向)。
 #
 # push の workflow は last-write-wins なので、ずれたまま main に何か入ると
 # WebUI 側の編集が消える。それを防ぐための入口。
+#
+# 定期実行はしない。WebUI で編集したときに Actions から手で動かす。
 
 on:
-  schedule:
-    # 毎日 09:00 JST (00:00 UTC)
-    - cron: "0 0 * * *"
   workflow_dispatch:
 
 permissions:
