@@ -32,7 +32,7 @@ pub fn run(target: &Target, options: Options) -> Result<()> {
     let ctx = Context::discover()?;
     for problem_id in ctx.repo.target_problems(target.problem_id, target.all)? {
         let client = ctx.client(problem_id)?;
-        let dir = ctx.problem_dir(problem_id);
+        let dir = ctx.problem_dir(problem_id)?;
         push_one(&client, &dir, options)?;
     }
     Ok(())

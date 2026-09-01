@@ -34,6 +34,9 @@ cargo run -- init 13954
 
 `yukicoder.toml` と `problems/13954/` ができます。これをコミットすれば準備完了です。
 
+ディレクトリ名は後から自由に変えられます。どの問題かは `problem.toml` の `problemId` で
+決まるので、`problems/tutorial-dp/` や `problems/abc001/a/` のような置き方もできます。
+
 ## 2. 更新する
 
 ### 問題文や設定を変える

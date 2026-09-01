@@ -55,6 +55,26 @@ pub struct GeneratorConfig {
     pub prefix: Option<String>,
 }
 
+/// `problem.toml` の中身。
+///
+/// `problemId` がその問題の identity で、ディレクトリ名には依存しない。
+/// 残りは API の設定そのもの。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProblemFile {
+    /// 対応する問題 ID。古い形式のために省略も許す。
+    #[serde(default)]
+    pub problem_id: Option<i64>,
+    #[serde(flatten)]
+    pub settings: ProblemSettings,
+}
+
+/// `problem.toml` を読む。
+pub fn read_problem_file(path: &Path) -> Result<ProblemFile> {
+    let text = read_text(path)?;
+    toml::from_str(&text).with_context(|| format!("{} を解釈できませんでした", display_path(path)))
+}
+
 /// 1 つの問題のローカルディレクトリ。
 #[derive(Debug, Clone)]
 pub struct ProblemDir {
@@ -81,19 +101,28 @@ impl ProblemDir {
         self.root.join(SETTINGS_FILE)
     }
 
+    /// `problem.toml` を読む。`problemId` が食い違っていたら止める。
     pub fn read_settings(&self) -> Result<ProblemSettings> {
         let path = self.settings_path();
-        let text = read_text(&path)?;
-        toml::from_str(&text)
-            .with_context(|| format!("{} を解釈できませんでした", display_path(&path)))
+        let file = read_problem_file(&path)?;
+        match file.problem_id {
+            Some(id) if id != self.problem_id => bail!(
+                "{} の problemId は {id} ですが、問題 {} として扱われています",
+                display_path(&path),
+                self.problem_id
+            ),
+            _ => Ok(file.settings),
+        }
     }
 
     pub fn write_settings(&self, settings: &ProblemSettings) -> Result<()> {
         let body =
             toml::to_string_pretty(settings).context("問題設定を TOML にできませんでした")?;
         let text = format!(
-            "# yukicoder 問題設定 (PUT /api/v1/problems/{}/edit と同じキー名)\n\
-             # 変更したら `yuki push` で反映する。\n\
+            "# yukicoder 問題設定。どの問題かは problemId で決まる (ディレクトリ名は自由)。\n\
+             # 他のキーは PUT /api/v1/problems/{{id}}/edit と同じ名前で、変更したら\n\
+             # `yuki push` で反映する。\n\
+             problemId = {}\n\
              {body}",
             self.problem_id
         );

@@ -32,7 +32,10 @@ impl Context {
         YukicoderClient::new(token, self.repo.config.base_url.clone())
     }
 
-    pub fn problem_dir(&self, problem_id: i64) -> ProblemDir {
-        ProblemDir::new(self.repo.problem_dir(problem_id), problem_id)
+    pub fn problem_dir(&self, problem_id: i64) -> Result<ProblemDir> {
+        Ok(ProblemDir::new(
+            self.repo.problem_dir(problem_id)?,
+            problem_id,
+        ))
     }
 }

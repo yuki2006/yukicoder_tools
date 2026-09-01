@@ -17,11 +17,12 @@ pub const CONFIG_FILE: &str = "yukicoder.toml";
 pub const DOTENV_FILE: &str = ".env";
 
 /// リポジトリ直下の `yukicoder.toml`。
+///
+/// 管理対象の問題は、ここには書かない。`problems_dir` 以下の `problem.toml` を
+/// 探し、その `problemId` で決まる。一覧を二重に持つと、ディレクトリを増やした
+/// ときに片方だけ更新して食い違う。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// 管理対象の問題 ID。
-    #[serde(default)]
-    pub problems: Vec<i64>,
     /// 問題ディレクトリを置く場所。既定は `problems`。
     #[serde(default = "default_problems_dir")]
     pub problems_dir: String,
@@ -41,11 +42,17 @@ fn default_base_url() -> String {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            problems: Vec::new(),
             problems_dir: default_problems_dir(),
             base_url: default_base_url(),
         }
     }
+}
+
+/// リポジトリの中で見つかった 1 つの問題。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Problem {
+    pub id: i64,
+    pub dir: PathBuf,
 }
 
 /// 設定ファイルと、それが置かれているディレクトリ。
@@ -93,36 +100,118 @@ impl Repo {
         crate::local::write_text(&path, &text)
     }
 
-    /// 問題ディレクトリ (`<problems_dir>/<問題ID>`)。
-    pub fn problem_dir(&self, problem_id: i64) -> PathBuf {
-        self.root
+    /// リポジトリの中の問題をすべて見つける。
+    ///
+    /// `problems_dir` 以下を降りて `problem.toml` を探し、その `problemId` を読む。
+    /// ディレクトリ名は問題 ID でなくてよい (`contests/abc001/a` のような置き方が
+    /// できる)。`problemId` が無い古い形式は、ディレクトリ名が数値ならそれを使う。
+    pub fn problems(&self) -> Result<Vec<Problem>> {
+        let base = self.root.join(&self.config.problems_dir);
+        let mut found = Vec::new();
+        collect_problems(&base, &mut found)?;
+        found.sort_by_key(|p| p.id);
+        for pair in found.windows(2) {
+            if pair[0].id == pair[1].id {
+                bail!(
+                    "問題 {} が {} と {} の両方にあります",
+                    pair[0].id,
+                    crate::local::display_path(&pair[0].dir),
+                    crate::local::display_path(&pair[1].dir)
+                );
+            }
+        }
+        Ok(found)
+    }
+
+    /// 問題 ID からディレクトリを決める。
+    ///
+    /// 見つからなければ `<problems_dir>/<問題ID>` を使う (`init` や、まだ
+    /// リポジトリに無い問題の `pull` 用)。
+    pub fn problem_dir(&self, problem_id: i64) -> Result<PathBuf> {
+        if let Some(problem) = self.problems()?.into_iter().find(|p| p.id == problem_id) {
+            return Ok(problem.dir);
+        }
+        Ok(self
+            .root
             .join(&self.config.problems_dir)
-            .join(problem_id.to_string())
+            .join(problem_id.to_string()))
     }
 
     /// コマンドで対象にする問題 ID を決める。
     ///
-    /// - `--all` なら設定ファイルのすべて
+    /// - `--all` ならリポジトリにあるすべて
     /// - ID 指定があればそれ
-    /// - どちらも無く、設定に問題が 1 つだけならそれ
+    /// - どちらも無く、リポジトリに問題が 1 つだけならそれ
     pub fn target_problems(&self, explicit: Option<i64>, all: bool) -> Result<Vec<i64>> {
-        if all {
-            if self.config.problems.is_empty() {
-                bail!("{CONFIG_FILE} の problems が空です");
-            }
-            return Ok(self.config.problems.clone());
-        }
         if let Some(id) = explicit {
+            if all {
+                bail!("--all と問題 ID は同時に指定できません");
+            }
             return Ok(vec![id]);
         }
-        match self.config.problems.as_slice() {
-            [only] => Ok(vec![*only]),
-            [] => bail!("対象の問題 ID を指定してください ({CONFIG_FILE} の problems が空です)"),
+        let problems = self.problems()?;
+        if all {
+            if problems.is_empty() {
+                bail!(
+                    "{} に問題がありません",
+                    crate::local::display_path(self.root.join(&self.config.problems_dir))
+                );
+            }
+            return Ok(problems.into_iter().map(|p| p.id).collect());
+        }
+        match problems.as_slice() {
+            [only] => Ok(vec![only.id]),
+            [] => bail!("対象の問題 ID を指定してください (`yuki init <問題ID>` で取得できます)"),
             _ => bail!(
                 "対象の問題 ID を指定してください (--all ですべて、または問題 ID を 1 つ指定)"
             ),
         }
     }
+}
+
+/// `problem.toml` のあるディレクトリを探す。見つけたらその下は見ない。
+fn collect_problems(dir: &Path, found: &mut Vec<Problem>) -> Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let settings = dir.join(crate::local::SETTINGS_FILE);
+    if settings.is_file() {
+        let file = crate::local::read_problem_file(&settings)?;
+        let id = match file.problem_id {
+            Some(id) => id,
+            // 古い形式。ディレクトリ名が問題 ID だったころのもの。
+            None => dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.parse::<i64>().ok())
+                .with_context(|| {
+                    format!(
+                        "{} に problemId がありません。`yuki pull <問題ID>` で書き足せます。",
+                        crate::local::display_path(&settings)
+                    )
+                })?,
+        };
+        found.push(Problem {
+            id,
+            dir: dir.to_path_buf(),
+        });
+        return Ok(());
+    }
+    let entries = fs::read_dir(dir)
+        .with_context(|| format!("{} を読めませんでした", crate::local::display_path(dir)))?;
+    for entry in entries {
+        let entry = entry
+            .with_context(|| format!("{} を読めませんでした", crate::local::display_path(dir)))?;
+        let path = entry.path();
+        let hidden = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with('.'));
+        if path.is_dir() && !hidden {
+            collect_problems(&path, found)?;
+        }
+    }
+    Ok(())
 }
 
 /// `.env` を最小限の形式で読む。
@@ -360,29 +449,96 @@ mod tests {
         );
     }
 
+    /// `problem.toml` の最小構成。既定値のあるキーは省く。
+    fn problem_toml(problem_id: Option<i64>) -> String {
+        let id = match problem_id {
+            Some(id) => format!("problemId = {id}\n"),
+            None => String::new(),
+        };
+        format!(
+            "{id}title = \"t\"\nlevel = 1.0\ntimeLimitMs = 2000\nmemoryLimit = 1024\n\
+             epsMode = \"-\"\neps = \"0.0\"\nwip = true\nrecruitingTester = false\n\
+             problemType = 0\njudgeType = 0\n"
+        )
+    }
+
+    fn repo_with(problems: &[(&str, Option<i64>)], tag: &str) -> Repo {
+        let root = temp_dir(tag);
+        let _ = fs::remove_dir_all(&root);
+        for (dir, id) in problems {
+            let dir = root.join("problems").join(dir);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("problem.toml"), problem_toml(*id)).unwrap();
+        }
+        fs::create_dir_all(root.join("problems")).unwrap();
+        Repo {
+            root,
+            config: Config::default(),
+        }
+    }
+
+    /// ディレクトリ名は自由で、problemId が問題を決める。
+    #[test]
+    fn problems_are_found_by_the_id_in_the_file() {
+        let repo = repo_with(
+            &[("tutorial-dp", Some(13954)), ("abc001/a", Some(20000))],
+            "discover",
+        );
+        let problems = repo.problems().unwrap();
+
+        assert_eq!(
+            problems.iter().map(|p| p.id).collect::<Vec<_>>(),
+            [13954, 20000]
+        );
+        assert!(problems[0].dir.ends_with("tutorial-dp"));
+        assert!(problems[1].dir.ends_with("a"));
+        assert_eq!(repo.problem_dir(13954).unwrap(), problems[0].dir);
+    }
+
+    /// problemId が無い古い形式は、ディレクトリ名が問題 ID だとみなす。
+    #[test]
+    fn directory_name_is_the_fallback_id() {
+        let repo = repo_with(&[("13954", None)], "fallback");
+        assert_eq!(repo.problems().unwrap()[0].id, 13954);
+    }
+
+    /// problemId もディレクトリ名も手がかりにならなければ止める。
+    #[test]
+    fn missing_problem_id_is_an_error() {
+        let repo = repo_with(&[("no-id-here", None)], "missing-id");
+        assert!(repo.problems().is_err());
+    }
+
+    /// 同じ問題を 2 か所で管理すると、push が競合するので止める。
+    #[test]
+    fn duplicate_problem_ids_are_rejected() {
+        let repo = repo_with(&[("a", Some(13954)), ("b", Some(13954))], "duplicate");
+        assert!(repo.problems().is_err());
+    }
+
     #[test]
     fn target_problems_needs_explicit_id_when_many() {
-        let repo = Repo {
-            root: PathBuf::from("."),
-            config: Config {
-                problems: vec![1, 2],
-                ..Config::default()
-            },
-        };
+        let repo = repo_with(&[("a", Some(1)), ("b", Some(2))], "many");
         assert!(repo.target_problems(None, false).is_err());
         assert_eq!(repo.target_problems(Some(2), false).unwrap(), vec![2]);
         assert_eq!(repo.target_problems(None, true).unwrap(), vec![1, 2]);
+        assert!(
+            repo.target_problems(Some(2), true).is_err(),
+            "--all と ID の同時指定はどちらを意図したか分からない"
+        );
     }
 
     #[test]
     fn target_problems_uses_the_only_problem() {
-        let repo = Repo {
-            root: PathBuf::from("."),
-            config: Config {
-                problems: vec![13954],
-                ..Config::default()
-            },
-        };
+        let repo = repo_with(&[("only", Some(13954))], "single");
         assert_eq!(repo.target_problems(None, false).unwrap(), vec![13954]);
+    }
+
+    /// リポジトリにまだ無い問題は、既定の場所を使う (init / pull 用)。
+    #[test]
+    fn unknown_problems_fall_back_to_the_default_directory() {
+        let repo = repo_with(&[], "unknown");
+        assert!(repo.problem_dir(13954).unwrap().ends_with("problems/13954"));
+        assert!(repo.target_problems(None, false).is_err());
     }
 }

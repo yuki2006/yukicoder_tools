@@ -19,7 +19,7 @@ main にマージされた内容を GitHub Actions が yukicoder へ反映する
 | `yuki testcases` | yukicoder 側のテストケース一覧を表示する |
 | `yuki languages` | 提出・ジェネレータで使う言語 ID の一覧 |
 
-`pull` / `diff` / `push` は `--all` で `yukicoder.toml` に書いた問題すべてを対象にできます。
+`pull` / `diff` / `push` は `--all` でリポジトリにあるすべての問題を対象にできます。
 
 ## インストール
 
@@ -60,8 +60,8 @@ GitHub Actions では Secrets に `YUKICODER_TOKEN` を登録し、ジョブの 
 ## ディレクトリ構成
 
 ```text
-yukicoder.toml              管理対象の問題 ID / API のベース URL
-problems/<問題ID>/
+yukicoder.toml              問題ディレクトリの場所 / API のベース URL
+problems/<好きな名前>/        どの問題かは problem.toml の problemId で決まる
   problem.toml              問題設定 (キー名は API と同じ camelCase)
   statement.md              問題文。HTML で管理する問題は statement.html
   editorial.md              解説 (任意)。HTML なら editorial.html
@@ -77,6 +77,10 @@ problems/<問題ID>/
   solutions/                提出用のソース (同期対象ではない)
 ```
 
+- **どの問題かは `problem.toml` の `problemId` で決まります。** ディレクトリ名は自由なので、
+  `problems/tutorial-dp/` や `problems/abc001/a/` のように置けます。`problems_dir` 以下を
+  降りて `problem.toml` を探すので、管理対象の一覧をどこかに書く必要はありません。
+  同じ `problemId` が 2 か所にあるとエラーにします。
 - 問題文の形式は拡張子で決まります。`statement.md` があれば Markdown、`statement.html` があれば HTML。
   両方あるとどちらを送るか決められないのでエラーにします。
 - 解説はローカルに `editorial.md` / `editorial.html` があるときだけ同期します。

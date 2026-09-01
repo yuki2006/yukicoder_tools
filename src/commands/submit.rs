@@ -1,6 +1,4 @@
 //! `yuki submit` / `yuki solution` — 提出と、想定解の登録。
-//!
-//! 編集トークンで提出すると、トークンの発行者としての提出になる。
 
 use std::path::Path;
 

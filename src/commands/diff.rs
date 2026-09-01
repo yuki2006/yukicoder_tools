@@ -16,7 +16,7 @@ pub fn run(target: &Target, testcases: bool, exit_code: bool) -> Result<()> {
     let mut differs = false;
     for problem_id in ctx.repo.target_problems(target.problem_id, target.all)? {
         let client = ctx.client(problem_id)?;
-        let dir = ctx.problem_dir(problem_id);
+        let dir = ctx.problem_dir(problem_id)?;
         differs |= diff_one(&client, &dir, testcases)?;
     }
     if differs && exit_code {

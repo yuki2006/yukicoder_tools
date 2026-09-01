@@ -12,7 +12,7 @@ pub fn run(target: &Target, testcases: bool) -> Result<()> {
     let ctx = Context::discover()?;
     for problem_id in ctx.repo.target_problems(target.problem_id, target.all)? {
         let client = ctx.client(problem_id)?;
-        let dir = ctx.problem_dir(problem_id);
+        let dir = ctx.problem_dir(problem_id)?;
         pull_one(&client, &dir, testcases)?;
     }
     Ok(())

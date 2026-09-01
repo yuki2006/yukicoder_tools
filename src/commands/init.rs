@@ -11,25 +11,24 @@ pub fn run(problem_id: i64, testcases: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("カレントディレクトリを取得できませんでした")?;
     let config_path = cwd.join(CONFIG_FILE);
 
-    let mut repo = if config_path.is_file() {
+    // 管理対象の一覧は持たない。問題ディレクトリの problem.toml が正なので、
+    // ここで作るのはリポジトリの目印としての設定ファイルだけ。
+    let repo = if config_path.is_file() {
         Repo::load(&cwd)?
     } else {
-        Repo {
+        let repo = Repo {
             root: cwd.clone(),
             config: Config::default(),
-        }
+        };
+        repo.save()?;
+        println!("{} を書きました", display_path(&config_path));
+        repo
     };
-    if !repo.config.problems.contains(&problem_id) {
-        repo.config.problems.push(problem_id);
-        repo.config.problems.sort_unstable();
-    }
-    repo.save()?;
-    println!("{} を書きました", display_path(&config_path));
 
     warn_if_dotenv_tracked(&cwd);
 
     let client = crate::commands::Context { repo: repo.clone() }.client(problem_id)?;
-    let dir = ProblemDir::new(repo.problem_dir(problem_id), problem_id);
+    let dir = ProblemDir::new(repo.problem_dir(problem_id)?, problem_id);
     crate::commands::pull::pull_one(&client, &dir, testcases)
 }
 
