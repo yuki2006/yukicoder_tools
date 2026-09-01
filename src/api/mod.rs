@@ -267,16 +267,17 @@ impl YukicoderClient {
         )
     }
 
-    /// テストケース 1 件の中身を取得する。本文はそのままのテキスト。
-    pub fn get_testcase(&self, problem_id: i64, which: Which, name: &str) -> Result<String> {
+    /// テストケース 1 件の中身を、保存されているバイト列のまま取得する。
+    pub fn get_testcase(&self, problem_id: i64, which: Which, name: &str) -> Result<Vec<u8>> {
         let path = format!("/v1/problems/{problem_id}/file/{which}/{name}");
         let res = self
             .authed(self.http.get(self.url(&path)))
             .send()
             .context("テストケースの取得リクエストを送信できませんでした")?;
-        Self::check(res, "テストケースの取得")?
-            .text()
-            .context("テストケースの本文を読めませんでした")
+        Ok(Self::check(res, "テストケースの取得")?
+            .bytes()
+            .context("テストケースの本文を読めませんでした")?
+            .to_vec())
     }
 
     /// テストケースをまとめてアップロードする。

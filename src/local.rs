@@ -224,8 +224,11 @@ impl ProblemDir {
         self.root.join("testcases").join(which.as_str())
     }
 
-    /// ローカルのテストケースをファイル名順に読む。改行は LF に揃える。
-    pub fn read_testcases(&self, which: Which) -> Result<BTreeMap<String, String>> {
+    /// ローカルのテストケースをファイル名順に、そのまま読む。
+    ///
+    /// 内容は変換しない。yukicoder は保存時に書き換えるが、その結果は
+    /// `push` のあとに取り込む。
+    pub fn read_testcases(&self, which: Which) -> Result<BTreeMap<String, Vec<u8>>> {
         let dir = self.testcase_dir(which);
         let mut cases = BTreeMap::new();
         if !dir.is_dir() {
@@ -262,22 +265,17 @@ impl ProblemDir {
                     }
                 );
             }
-            let raw = read_text(&path)?;
-            let content = normalize_testcase(&raw);
-            if content != raw {
-                eprintln!(
-                    "警告: {} は行末に半角スペースがあります。yukicoder は保存時に\
-                     取り除くので、その形で送ります。",
-                    display_path(&path)
-                );
-            }
-            cases.insert(name.to_string(), content);
+            cases.insert(name.to_string(), read_bytes(&path)?);
         }
         Ok(cases)
     }
 
-    pub fn write_testcase(&self, which: Which, name: &str, content: &str) -> Result<()> {
-        write_text(&self.testcase_dir(which).join(name), content)
+    pub fn testcase_path(&self, which: Which, name: &str) -> PathBuf {
+        self.testcase_dir(which).join(name)
+    }
+
+    pub fn write_testcase(&self, which: Which, name: &str, content: &[u8]) -> Result<()> {
+        write_bytes(&self.testcase_path(which, name), content)
     }
 }
 
@@ -340,20 +338,22 @@ fn normalize(text: &str) -> String {
         .replace('\r', "\n")
 }
 
-/// テストケースの内容を、サーバに保存されたあとの形に揃える。
+/// テストケースをそのまま読む。
 ///
-/// サーバは各行の末尾の半角スペースを取り除く (タブは残る)。同じ処理をして
-/// おかないと、末尾にスペースを含むケースが毎回差分として残り、push のたびに
-/// 再アップロードされる。
-pub fn normalize_testcase(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for (i, line) in normalize(text).split('\n').enumerate() {
-        if i > 0 {
-            out.push('\n');
-        }
-        out.push_str(line.trim_end_matches(' '));
+/// 内容は一切変換しない。yukicoder は保存時に改行コードや行末の空白を書き
+/// 換えるが、その規則をクライアントに持たせるとサーバ側が変わったときに
+/// 食い違う。**正規化はサーバに任せ、結果を取り込む。**
+pub fn read_bytes(path: &Path) -> Result<Vec<u8>> {
+    fs::read(path).with_context(|| format!("{} を読めませんでした", display_path(path)))
+}
+
+/// バイト列をそのまま書く。親ディレクトリが無ければ作る。
+pub fn write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("{} を作成できませんでした", display_path(parent)))?;
     }
-    out
+    fs::write(path, bytes).with_context(|| format!("{} を書けませんでした", display_path(path)))
 }
 
 /// サーバがファイル名から `A-Za-z0-9._` 以外を取り除いた結果を返す。
@@ -383,21 +383,12 @@ pub fn display_path(path: impl AsRef<Path>) -> String {
 mod tests {
     use super::*;
 
-    /// サーバは各行の末尾の半角スペースを取り除く。タブは残る。
+    /// テキストファイルの読み込みでは改行を LF に揃える (Windows の
+    /// チェックアウト対策)。テストケースはこの経路を通らず、そのまま送る。
     #[test]
-    fn testcase_normalization_matches_the_server() {
-        assert_eq!(normalize_testcase("a b \n"), "a b\n");
-        assert_eq!(normalize_testcase("last  "), "last");
-        assert_eq!(normalize_testcase("   g\n"), "   g\n", "行頭は残す");
-        assert_eq!(normalize_testcase("e  f\n"), "e  f\n", "行の途中は残す");
-        assert_eq!(normalize_testcase("c\td\t\n"), "c\td\t\n", "タブは残る");
-    }
-
-    /// 改行は CRLF も単独 CR も LF になる。サーバの保存時の変換と同じ。
-    #[test]
-    fn line_endings_become_lf() {
-        assert_eq!(normalize_testcase("a\r\nb\rc\n"), "a\nb\nc\n");
+    fn text_line_endings_become_lf() {
         assert_eq!(normalize("a\r\nb\rc"), "a\nb\nc");
+        assert_eq!(normalize("\u{feff}a"), "a", "BOM を落とす");
     }
 
     /// ファイル名は A-Za-z0-9._ 以外が落ちる。

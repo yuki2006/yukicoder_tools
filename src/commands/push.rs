@@ -246,7 +246,7 @@ fn push_testcases(
             true
         };
         if changed {
-            changed_files.push((name.clone(), content.clone().into_bytes()));
+            changed_files.push((name.clone(), content.clone()));
         }
     }
 
@@ -262,8 +262,10 @@ fn push_testcases(
         );
     }
     if !options.dry_run {
+        let mut uploaded_names: Vec<(String, Vec<u8>)> = Vec::new();
         for chunk in batches(changed_files) {
             let sent: Vec<String> = chunk.iter().map(|(name, _)| name.clone()).collect();
+            uploaded_names.extend(chunk.iter().cloned());
             let res = client
                 .upload_testcases(problem_id, which, chunk)
                 .with_context(|| format!("テストケース {which} のアップロード"))?;
@@ -280,6 +282,7 @@ fn push_testcases(
                 }
             }
         }
+        take_back_normalized(client, dir, which, &uploaded_names)?;
     }
 
     let mut pruned = 0usize;
@@ -307,6 +310,42 @@ fn push_testcases(
     }
     Ok(())
 }
+
+/// yukicoder は保存時にテストケースを書き換える (改行コード、行末の半角
+/// スペース、末尾の改行)。**その規則はクライアントに持たせず、保存された
+/// 結果を取り込む。** 規則を写すと、サーバ側が変わったときに黙って食い違う。
+///
+/// 書き換えは非同期に走るので、少し待ってから取得する。それでも間に合わな
+/// かった場合は、次の `yuki pull` で揃う。
+fn take_back_normalized(
+    client: &YukicoderClient,
+    dir: &ProblemDir,
+    which: Which,
+    uploaded: &[(String, Vec<u8>)],
+) -> Result<()> {
+    if uploaded.is_empty() {
+        return Ok(());
+    }
+    std::thread::sleep(NORMALIZE_WAIT);
+    for (name, sent) in uploaded {
+        let stored = client
+            .get_testcase(dir.problem_id(), which, name)
+            .with_context(|| format!("テストケース {which}/{name} の取得"))?;
+        if &stored == sent {
+            continue;
+        }
+        dir.write_testcase(which, name, &stored)?;
+        println!(
+            "  テストケース {which}/{name}: yukicoder 側で内容が調整されたので \
+             {} を更新しました",
+            display_path(dir.testcase_path(which, name))
+        );
+    }
+    Ok(())
+}
+
+/// サーバ側の書き換えが終わるのを待つ時間。
+const NORMALIZE_WAIT: Duration = Duration::from_secs(2);
 
 /// アップロードは HTTP ヘッダ込みで 30MiB までなので、余裕を見て分割する。
 /// ジャッジコードのコンパイルを待つ時間。
