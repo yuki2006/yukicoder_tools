@@ -246,7 +246,32 @@ impl ProblemDir {
             if name.starts_with('.') {
                 continue;
             }
-            cases.insert(name.to_string(), read_text(&path)?);
+            // サーバはファイル名から A-Za-z0-9._ 以外を取り除く。名前が変わると
+            // アップロードのたびに別ファイルとして増え、差分も消えないので、
+            // 送る前に止めてリネームしてもらう。
+            let sanitized = sanitized_file_name(name);
+            if sanitized != name {
+                bail!(
+                    "テストケース名 {}/{name} は yukicoder では {} になります \
+                     (使えるのは A-Za-z0-9._ だけ)。ファイル名を変更してください。",
+                    which,
+                    if sanitized.is_empty() {
+                        "空の名前".to_string()
+                    } else {
+                        sanitized
+                    }
+                );
+            }
+            let raw = read_text(&path)?;
+            let content = normalize_testcase(&raw);
+            if content != raw {
+                eprintln!(
+                    "警告: {} は行末に半角スペースがあります。yukicoder は保存時に\
+                     取り除くので、その形で送ります。",
+                    display_path(&path)
+                );
+            }
+            cases.insert(name.to_string(), content);
         }
         Ok(cases)
     }
@@ -305,8 +330,40 @@ pub fn write_text(path: &Path, text: &str) -> Result<()> {
         .with_context(|| format!("{} を書けませんでした", display_path(path)))
 }
 
+/// BOM を落とし、改行を LF に揃える。
+///
+/// サーバは保存時に `\r\n` と単独の `\r` をどちらも `\n` に変換する。同じ
+/// 変換をしておかないと、ローカルと保存後の内容が食い違って毎回差分が出る。
 fn normalize(text: &str) -> String {
-    text.trim_start_matches('\u{feff}').replace("\r\n", "\n")
+    text.trim_start_matches('\u{feff}')
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+}
+
+/// テストケースの内容を、サーバに保存されたあとの形に揃える。
+///
+/// サーバは各行の末尾の半角スペースを取り除く (タブは残る)。同じ処理をして
+/// おかないと、末尾にスペースを含むケースが毎回差分として残り、push のたびに
+/// 再アップロードされる。
+pub fn normalize_testcase(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in normalize(text).split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(line.trim_end_matches(' '));
+    }
+    out
+}
+
+/// サーバがファイル名から `A-Za-z0-9._` 以外を取り除いた結果を返す。
+///
+/// アップロードした名前がそのまま保存されるとは限らない。例えば
+/// `case-01.txt` は `case01.txt` になる。
+pub fn sanitized_file_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_')
+        .collect()
 }
 
 /// 出力用にパスを短くする。
@@ -320,4 +377,34 @@ pub fn display_path(path: impl AsRef<Path>) -> String {
         .and_then(|cwd| path.strip_prefix(cwd).ok().map(Path::to_path_buf))
         .unwrap_or_else(|| path.to_path_buf());
     shortened.display().to_string().replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// サーバは各行の末尾の半角スペースを取り除く。タブは残る。
+    #[test]
+    fn testcase_normalization_matches_the_server() {
+        assert_eq!(normalize_testcase("a b \n"), "a b\n");
+        assert_eq!(normalize_testcase("last  "), "last");
+        assert_eq!(normalize_testcase("   g\n"), "   g\n", "行頭は残す");
+        assert_eq!(normalize_testcase("e  f\n"), "e  f\n", "行の途中は残す");
+        assert_eq!(normalize_testcase("c\td\t\n"), "c\td\t\n", "タブは残る");
+    }
+
+    /// 改行は CRLF も単独 CR も LF になる。サーバの保存時の変換と同じ。
+    #[test]
+    fn line_endings_become_lf() {
+        assert_eq!(normalize_testcase("a\r\nb\rc\n"), "a\nb\nc\n");
+        assert_eq!(normalize("a\r\nb\rc"), "a\nb\nc");
+    }
+
+    /// ファイル名は A-Za-z0-9._ 以外が落ちる。
+    #[test]
+    fn file_names_lose_unsupported_characters() {
+        assert_eq!(sanitized_file_name("1_sample_1.txt"), "1_sample_1.txt");
+        assert_eq!(sanitized_file_name("case-01.txt"), "case01.txt");
+        assert_eq!(sanitized_file_name("テスト 1.txt"), "1.txt");
+    }
 }

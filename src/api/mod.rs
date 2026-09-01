@@ -3,13 +3,15 @@
 //! 認証はすべて `Authorization: Bearer <token>`。トークンはアカウントの API
 //! キーか、問題ごとの編集トークン (`ypt_...`)。
 
+pub mod body;
 pub mod models;
 
 #[cfg(test)]
 mod tests;
 
 use anyhow::{anyhow, bail, Context, Result};
-use reqwest::blocking::{multipart, Client, RequestBuilder, Response};
+use reqwest::blocking::{Client, RequestBuilder, Response};
+use reqwest::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -120,10 +122,27 @@ impl YukicoderClient {
     }
 
     fn send_json<B: Serialize>(&self, method: Method, path: &str, body: &B) -> Result<Response> {
-        self.authed(self.http.request(method, self.url(path)))
-            .json(body)
-            .send()
-            .map_err(Into::into)
+        let bytes = serde_json::to_vec(body).context("リクエストを JSON にできませんでした")?;
+        let body = body::Body::new(bytes)?;
+        self.send_body(method, path, "application/json", body)
+    }
+
+    /// ボディを送る。圧縮したときは `Content-Encoding: gzip` を付ける。
+    fn send_body(
+        &self,
+        method: Method,
+        path: &str,
+        content_type: &str,
+        body: body::Body,
+    ) -> Result<Response> {
+        let mut req = self
+            .authed(self.http.request(method, self.url(path)))
+            .header(CONTENT_TYPE, content_type)
+            .body(body.bytes);
+        if body.gzipped {
+            req = req.header(CONTENT_ENCODING, "gzip");
+        }
+        req.send().map_err(Into::into)
     }
 
     /// 書き込み系 API を呼ぶ。
@@ -273,19 +292,19 @@ impl YukicoderClient {
         which: Which,
         files: Vec<(String, Vec<u8>)>,
     ) -> Result<UploadResponse> {
-        let mut form = multipart::Form::new();
-        for (name, content) in files {
-            let part = multipart::Part::bytes(content)
-                .file_name(name)
-                .mime_str("text/plain")
-                .context("multipart の作成に失敗しました")?;
-            form = form.part("newfiles", part);
-        }
+        let parts: Vec<body::Part> = files
+            .into_iter()
+            .map(|(name, content)| body::Part::file("newfiles", name, content))
+            .collect();
+        let (boundary, raw) = body::multipart(&parts)?;
         let path = format!("/v1/problems/{problem_id}/file/{which}");
         let res = self
-            .authed(self.http.post(self.url(&path)))
-            .multipart(form)
-            .send()
+            .send_body(
+                Method::POST,
+                &path,
+                &format!("multipart/form-data; boundary={boundary}"),
+                body::Body::new(raw)?,
+            )
             .context("テストケースのアップロードを送信できませんでした")?;
         let body = Self::check(res, "テストケースのアップロード")?
             .text()
@@ -308,14 +327,19 @@ impl YukicoderClient {
 
     /// 想定解などを提出する。レスポンスは JSON とは限らないので生の文字列で返す。
     pub fn submit(&self, problem_id: i64, lang: &str, source: String) -> Result<String> {
-        let form = multipart::Form::new()
-            .text("lang", lang.to_string())
-            .text("source", source);
+        let parts = [
+            body::Part::text("lang", lang),
+            body::Part::text("source", source),
+        ];
+        let (boundary, raw) = body::multipart(&parts)?;
         let path = format!("/v1/problems/{problem_id}/submit");
         let res = self
-            .authed(self.http.post(self.url(&path)))
-            .multipart(form)
-            .send()
+            .send_body(
+                Method::POST,
+                &path,
+                &format!("multipart/form-data; boundary={boundary}"),
+                body::Body::new(raw)?,
+            )
             .context("提出リクエストを送信できませんでした")?;
         Self::check(res, "提出")?
             .text()
