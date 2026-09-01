@@ -79,7 +79,7 @@ impl Repo {
             match dir.parent() {
                 Some(parent) => dir = parent,
                 None => bail!(
-                    "{CONFIG_FILE} が見つかりません。`yuki init <問題ID>` で作成してください。"
+                    "{CONFIG_FILE} が見つかりません。`yuki-tool init <問題ID>` で作成してください。"
                 ),
             }
         }
@@ -176,7 +176,9 @@ impl Repo {
         }
         match problems.as_slice() {
             [only] => Ok(vec![only.id]),
-            [] => bail!("対象の問題 ID を指定してください (`yuki init <問題ID>` で取得できます)"),
+            [] => {
+                bail!("対象の問題 ID を指定してください (`yuki-tool init <問題ID>` で取得できます)")
+            }
             _ => bail!(
                 "対象の問題 ID を指定してください (--all ですべて、または問題 ID を 1 つ指定)"
             ),
@@ -201,7 +203,7 @@ fn collect_problems(dir: &Path, found: &mut Vec<Problem>) -> Result<()> {
                 .and_then(|name| name.parse::<i64>().ok())
                 .with_context(|| {
                     format!(
-                        "{} に problemId がありません。`yuki pull <問題ID>` で書き足せます。",
+                        "{} に problemId がありません。`yuki-tool pull <問題ID>` で書き足せます。",
                         crate::local::display_path(&settings)
                     )
                 })?,

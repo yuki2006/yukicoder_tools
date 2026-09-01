@@ -43,7 +43,7 @@ jobs:
       - name: yukicoder から取得する
         env:
           YUKICODER_TOKEN: ${{ secrets.YUKICODER_TOKEN }}
-        run: ./target/release/yuki pull --all
+        run: ./target/release/yuki-tool pull --all
 
       - name: problems_dir を読む
         run: |
@@ -78,6 +78,6 @@ jobs:
           git push origin "$branch"
           gh pr create \
             --title "yukicoder 側の変更を取り込む" \
-            --body "yukicoder 側にあってリポジトリに無い変更を \`yuki pull\` で取り込みました。マージするとリポジトリが yukicoder に追いつきます。" \
+            --body "yukicoder 側にあってリポジトリに無い変更を \`yuki-tool pull\` で取り込みました。マージするとリポジトリが yukicoder に追いつきます。" \
             --base "$BASE_BRANCH" \
             --head "$branch"

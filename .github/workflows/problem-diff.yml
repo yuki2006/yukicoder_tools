@@ -41,7 +41,7 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          ./target/release/yuki diff --all --exit-code > diff.txt 2>&1 || status=$?
+          ./target/release/yuki-tool diff --all --exit-code > diff.txt 2>&1 || status=$?
           {
             echo "## yukicoder との差分"
             echo

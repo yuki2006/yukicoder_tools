@@ -37,7 +37,7 @@ cargo run -- init 13954
 ディレクトリ名は後から自由に変えられます。どの問題かは `problem.toml` の `problemId` で
 決まるので、`problems/tutorial-dp/` や `problems/abc001/a/` のような置き方もできます。
 
-2 問目からは `yuki new` を使います。yukicoder で問題を作って ID とトークンを発行したら、
+2 問目からは `yuki-tool new` を使います。yukicoder で問題を作って ID とトークンを発行したら、
 
 ```sh
 cargo run -- new 20000 --dir abc001/a
@@ -81,7 +81,7 @@ git push -u origin fix-statement
 ```
 
 差分があること自体は失敗になりません (PR は「これから反映する変更」なので)。
-落ちるのは `problem.toml` が壊れているなど、`yuki` 自体がエラーになった場合だけです。
+落ちるのは `problem.toml` が壊れているなど、`yuki-tool` 自体がエラーになった場合だけです。
 
 ### マージすると反映される
 

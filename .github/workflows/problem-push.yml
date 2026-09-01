@@ -63,7 +63,7 @@ jobs:
           if [ "${{ inputs.prune }}" = "true" ]; then args+=(--prune); fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then args+=(--dry-run); fi
           status=0
-          ./target/release/yuki "${args[@]}" | tee push.txt || status=$?
+          ./target/release/yuki-tool "${args[@]}" | tee push.txt || status=$?
           {
             echo "## yukicoder への反映"
             echo
@@ -73,14 +73,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-      # yukicoder は保存時にテストケースを書き換えることがあり、yuki push は
+      # yukicoder は保存時にテストケースを書き換えることがあり、yuki-tool push は
       # その結果を作業ツリーへ書き戻す。ここでコミットしないと使い捨ての
       # チェックアウトごと捨てられ、以後の diff と push が同じファイルを
       # 差分ありとして扱い続ける。
       # このコミットは problems/** に当たって本 workflow をもう一度起動するが、
       # 2 回目は差分が無くコミットもしないので、そこで止まる。
       # main が branch protection で守られている場合は、bot の push を許可するか、
-      # この step を外して手元で `yuki pull` してコミットすること。
+      # この step を外して手元で `yuki-tool pull` してコミットすること。
       - name: サーバ側で調整された内容をコミットする
         run: |
           dir=$(sed -n 's/^problems_dir *= *"\(.*\)"/\1/p' yukicoder.toml)

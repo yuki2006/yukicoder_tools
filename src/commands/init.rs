@@ -1,4 +1,4 @@
-//! `yuki init` — リポジトリ直下に `yukicoder.toml` を作り、問題を取得する。
+//! `yuki-tool init` — リポジトリ直下に `yukicoder.toml` を作り、問題を取得する。
 
 use std::path::Path;
 

@@ -34,7 +34,7 @@ pub const JUDGE_CONFIG_FILE: &str = "judge.toml";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JudgeConfig {
-    /// 言語 ID (`yuki languages` で確認できる)。
+    /// 言語 ID (`yuki-tool languages` で確認できる)。
     pub lang_id: String,
     /// ソースファイル名 (このディレクトリからの相対)。
     pub source_file: String,
@@ -44,7 +44,7 @@ pub struct JudgeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratorConfig {
-    /// 言語 ID (`yuki languages` で確認できる)。
+    /// 言語 ID (`yuki-tool languages` で確認できる)。
     pub lang_id: String,
     /// ソースファイル名 (このディレクトリからの相対)。
     pub source_file: String,
@@ -121,7 +121,7 @@ impl ProblemDir {
         let text = format!(
             "# yukicoder 問題設定。どの問題かは problemId で決まる (ディレクトリ名は自由)。\n\
              # 他のキーは PUT /api/v1/problems/{{id}}/edit と同じ名前で、変更したら\n\
-             # `yuki push` で反映する。\n\
+             # `yuki-tool push` で反映する。\n\
              problemId = {}\n\
              {body}",
             self.problem_id

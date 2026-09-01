@@ -1,4 +1,4 @@
-//! `yuki new` — 問題のディレクトリ一式を作る。
+//! `yuki-tool new` — 問題のディレクトリ一式を作る。
 //!
 //! yukicoder で問題を作る (ID と編集トークンが発行される) と、サーバには
 //! テンプレートの問題文が入っている。それを取得したうえで、`pull` は作らない
@@ -23,7 +23,7 @@ pub fn run(problem_id: i64, dir: Option<String>) -> Result<()> {
         .find(|p| p.id == problem_id)
     {
         bail!(
-            "問題 {problem_id} は {} にあります。取得し直すなら `yuki pull {problem_id}` です。",
+            "問題 {problem_id} は {} にあります。取得し直すなら `yuki-tool pull {problem_id}` です。",
             display_path(&existing.dir)
         );
     }
@@ -57,7 +57,7 @@ pub fn run(problem_id: i64, dir: Option<String>) -> Result<()> {
 
     println!(
         "\n{} に問題 {problem_id} を用意しました。\n\
-         statement.md と problem.toml を編集して `yuki push {problem_id}` で反映します。",
+         statement.md と problem.toml を編集して `yuki-tool push {problem_id}` で反映します。",
         display_path(dir.root())
     );
     Ok(())

@@ -1,4 +1,4 @@
-//! `yuki languages` — 提出・ジェネレータで使う言語 ID の一覧。認証不要。
+//! `yuki-tool languages` — 提出・ジェネレータで使う言語 ID の一覧。認証不要。
 
 use anyhow::Result;
 

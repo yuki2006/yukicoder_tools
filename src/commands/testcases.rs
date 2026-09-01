@@ -1,4 +1,4 @@
-//! `yuki testcases` — yukicoder 側のテストケース一覧を表示する。
+//! `yuki-tool testcases` — yukicoder 側のテストケース一覧を表示する。
 
 use anyhow::Result;
 

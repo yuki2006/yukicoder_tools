@@ -1,4 +1,4 @@
-//! `yuki diff` — ローカルと yukicoder の差分を表示する。
+//! `yuki-tool diff` — ローカルと yukicoder の差分を表示する。
 //!
 //! CI の PR チェック用に `--exit-code` を用意している。差分があれば終了コード 2。
 

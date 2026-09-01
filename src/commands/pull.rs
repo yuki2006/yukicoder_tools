@@ -1,4 +1,4 @@
-//! `yuki pull` — yukicoder の内容をローカルのファイルに書き出す。
+//! `yuki-tool pull` — yukicoder の内容をローカルのファイルに書き出す。
 
 use anyhow::{Context as _, Result};
 

@@ -1,6 +1,6 @@
 # yukicoder-tools
 
-yukicoder の問題を Git リポジトリで管理し、CI/CD から反映するための CLI (`yuki`) です。
+yukicoder の問題を Git リポジトリで管理し、CI/CD から反映するための CLI (`yuki-tool`) です。
 
 問題設定・問題文・テストケース・ジェネレータ・解説をローカルのファイルとして扱い、
 yukicoder の公開 API 経由で双方向に同期します。リポジトリを正として、
@@ -10,15 +10,15 @@ main にマージされた内容を GitHub Actions が yukicoder へ反映する
 
 | コマンド | 内容 |
 | --- | --- |
-| `yuki init <問題ID>` | `yukicoder.toml` を作り、問題を取得する |
-| `yuki new <問題ID> [--dir <名前>]` | 問題のディレクトリ一式を作る (取得 + testcases/ solutions/ の骨組み) |
-| `yuki pull [問題ID]` | yukicoder の内容をローカルに書き出す |
-| `yuki diff [問題ID]` | ローカルと yukicoder の差分を表示する (`--exit-code` で差分時に終了コード 2) |
-| `yuki push [問題ID]` | ローカルの内容を yukicoder に反映する (`--dry-run` / `--prune` / `--generate`) |
-| `yuki submit --file <ファイル> --lang <言語ID>` | ソースを提出する |
-| `yuki solution <提出ID> --summary "..."` | AC した提出を解説ページの「想定解」に登録する (`--delete` で解除) |
-| `yuki testcases` | yukicoder 側のテストケース一覧を表示する |
-| `yuki languages` | 提出・ジェネレータで使う言語 ID の一覧 |
+| `yuki-tool init <問題ID>` | `yukicoder.toml` を作り、問題を取得する |
+| `yuki-tool new <問題ID> [--dir <名前>]` | 問題のディレクトリ一式を作る (取得 + testcases/ solutions/ の骨組み) |
+| `yuki-tool pull [問題ID]` | yukicoder の内容をローカルに書き出す |
+| `yuki-tool diff [問題ID]` | ローカルと yukicoder の差分を表示する (`--exit-code` で差分時に終了コード 2) |
+| `yuki-tool push [問題ID]` | ローカルの内容を yukicoder に反映する (`--dry-run` / `--prune` / `--generate`) |
+| `yuki-tool submit --file <ファイル> --lang <言語ID>` | ソースを提出する |
+| `yuki-tool solution <提出ID> --summary "..."` | AC した提出を解説ページの「想定解」に登録する (`--delete` で解除) |
+| `yuki-tool testcases` | yukicoder 側のテストケース一覧を表示する |
+| `yuki-tool languages` | 提出・ジェネレータで使う言語 ID の一覧 |
 
 `pull` / `diff` / `push` は `--all` でリポジトリにあるすべての問題を対象にできます。
 
@@ -26,7 +26,7 @@ main にマージされた内容を GitHub Actions が yukicoder へ反映する
 
 ```sh
 cargo build --release
-# target/release/yuki
+# target/release/yuki-tool
 ```
 
 ## トークン
@@ -119,9 +119,9 @@ problems/<好きな名前>/        どの問題かは problem.toml の problemId
 - `problem-diff.yml` — PR で `problems/**` を触ったとき、yukicoder との差分をジョブサマリに出す。
   差分があること自体は失敗にしない (PR は「これから反映する変更」なので)。
   フォークからの PR には Secrets が渡らないので実行しない
-- `problem-push.yml` — main に入ったら `yuki push --all` で反映する。
+- `problem-push.yml` — main に入ったら `yuki-tool push --all` で反映する。
   `workflow_dispatch` から `--prune` / `--dry-run` も選べる
-- `problem-pull.yml` — 手動で `yuki pull --all` し、yukicoder 側にリポジトリと違う
+- `problem-pull.yml` — 手動で `yuki-tool pull --all` し、yukicoder 側にリポジトリと違う
   内容があれば取り込む PR を作る (定期実行はしない)
 
 反映は last-write-wins です。WebUI 側で直接編集した内容は push で上書きされます。

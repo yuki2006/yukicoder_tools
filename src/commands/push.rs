@@ -1,4 +1,4 @@
-//! `yuki push` — ローカルのファイルを yukicoder に反映する。
+//! `yuki-tool push` — ローカルのファイルを yukicoder に反映する。
 //!
 //! 書き込みは PUT (全置換)。部分更新ではないので問題設定は毎回すべて送る。問題文が空のまま
 //! 送ると保存済みの問題文が消えるため、`ProblemEditRequest::new` で止める。
@@ -200,7 +200,7 @@ fn push_judge_code(
         ),
         None if options.wait_compile => println!(
             "  ジャッジコード: {COMPILE_TIMEOUT:?} 待ってもコンパイルが終わりませんでした。\
-             `yuki pull` で後から確認してください。"
+             `yuki-tool pull` で後から確認してください。"
         ),
         None => println!("  ジャッジコード: コンパイル結果は待ちません (--no-wait-compile)"),
     }
@@ -316,7 +316,7 @@ fn push_testcases(
 /// 結果を取り込む。** 規則を写すと、サーバ側が変わったときに黙って食い違う。
 ///
 /// 書き換えは非同期に走るので、少し待ってから取得する。それでも間に合わな
-/// かった場合は、次の `yuki pull` で揃う。
+/// かった場合は、次の `yuki-tool pull` で揃う。
 fn take_back_normalized(
     client: &YukicoderClient,
     dir: &ProblemDir,

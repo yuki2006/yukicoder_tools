@@ -10,7 +10,7 @@ keywords = ["yukicoder", "competitive-programming", "cli"]
 categories = ["command-line-utilities"]
 
 [[bin]]
-name = "yuki"
+name = "yuki-tool"
 path = "src/main.rs"
 
 [dependencies]

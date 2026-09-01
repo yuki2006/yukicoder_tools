@@ -1,4 +1,4 @@
-//! `yuki submit` / `yuki solution` — 提出と、想定解の登録。
+//! `yuki-tool submit` / `yuki-tool solution` — 提出と、想定解の登録。
 
 use std::path::Path;
 
@@ -28,7 +28,7 @@ pub fn run(problem_id: Option<i64>, file: &Path, lang: &str) -> Result<()> {
     match submission_id(response) {
         Some(id) => println!(
             "提出しました: 提出 ID {id}\n結果は https://yukicoder.me/submissions/{id} で確認できます。\n\
-             AC を確認したら `yuki solution {id} --summary \"...\"` で想定解に登録できます。"
+             AC を確認したら `yuki-tool solution {id} --summary \"...\"` で想定解に登録できます。"
         ),
         None => println!("提出しました。レスポンス: {response}"),
     }

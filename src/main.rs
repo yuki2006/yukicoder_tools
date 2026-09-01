@@ -1,4 +1,4 @@
-//! `yuki` — Git リポジトリから yukicoder の問題を管理する CLI。
+//! `yuki-tool` — Git リポジトリから yukicoder の問題を管理する CLI。
 //!
 //! トークンは環境変数か `.env` からだけ読む (コマンドライン引数では渡さない)。
 
@@ -17,7 +17,7 @@ pub const EXIT_DIFF: i32 = 2;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "yuki",
+    name = "yuki-tool",
     version,
     about = "yukicoder の問題を Git リポジトリから管理する",
     long_about = "yukicoder の公開 API を使って、問題設定・問題文・テストケース・\
@@ -94,7 +94,7 @@ enum Command {
         /// 提出するファイル
         #[arg(short, long)]
         file: std::path::PathBuf,
-        /// 言語 ID (`yuki languages` で確認)
+        /// 言語 ID (`yuki-tool languages` で確認)
         #[arg(short, long)]
         lang: String,
     },
