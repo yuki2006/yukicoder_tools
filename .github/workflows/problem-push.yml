@@ -7,6 +7,8 @@ on:
   push:
     branches: [main]
     paths:
+      # yukicoder.toml の problems_dir を変えたら、ここも合わせて変えること
+      # (トリガーのパスは設定ファイルから導けない)。
       - "problems/**"
       - "yukicoder.toml"
   workflow_dispatch:
@@ -24,6 +26,10 @@ concurrency:
   # 反映は last-write-wins なので、同時に走らせない。
   group: yukicoder-push
   cancel-in-progress: false
+
+permissions:
+  # サーバ側で調整されたテストケースをコミットで取り込むため。
+  contents: write
 
 jobs:
   push:
@@ -50,10 +56,14 @@ jobs:
         env:
           YUKICODER_TOKEN: ${{ secrets.YUKICODER_TOKEN }}
         run: |
+          # pipefail が無いと、yuki の失敗が tee の 0 に置き換わって
+          # workflow が成功扱いになる。
+          set -o pipefail
           args=(push --all)
           if [ "${{ inputs.prune }}" = "true" ]; then args+=(--prune); fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then args+=(--dry-run); fi
-          ./target/release/yuki "${args[@]}" | tee push.txt
+          status=0
+          ./target/release/yuki "${args[@]}" | tee push.txt || status=$?
           {
             echo "## yukicoder への反映"
             echo
@@ -61,3 +71,26 @@ jobs:
             cat push.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      # yukicoder は保存時にテストケースを書き換えることがあり、yuki push は
+      # その結果を作業ツリーへ書き戻す。ここでコミットしないと使い捨ての
+      # チェックアウトごと捨てられ、以後の diff と push が同じファイルを
+      # 差分ありとして扱い続ける。
+      # このコミットは problems/** に当たって本 workflow をもう一度起動するが、
+      # 2 回目は差分が無くコミットもしないので、そこで止まる。
+      # main が branch protection で守られている場合は、bot の push を許可するか、
+      # この step を外して手元で `yuki pull` してコミットすること。
+      - name: サーバ側で調整された内容をコミットする
+        run: |
+          dir=$(sed -n 's/^problems_dir *= *"\(.*\)"/\1/p' yukicoder.toml)
+          dir=${dir:-problems}
+          if [ -z "$(git status --porcelain -- "$dir")" ]; then
+            echo "書き戻しはありません。"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "$dir"
+          git commit -m "yukicoder 側で調整されたテストケースを取り込む"
+          git push

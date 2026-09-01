@@ -51,8 +51,8 @@ fn diff_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> Resu
         differs = true;
         println!(
             "問題文: 形式が違います (yukicoder: {}, ローカル: {})",
-            format_kind(&remote_statement),
-            format_kind(&local_statement)
+            format_kind(remote_statement.is_markdown()),
+            format_kind(local_statement.is_markdown())
         );
     }
     differs |= print_text_diff("問題文", remote_statement.text(), local_statement.text());
@@ -60,6 +60,15 @@ fn diff_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> Resu
     if dir.has_editorial() {
         let editorial = client.get_editorial(problem_id)?;
         let local_editorial = dir.read_editorial()?;
+        // push はローカルの拡張子で保存形式を送るので、形式の違いも差分。
+        if editorial.is_markdown != local_editorial.is_markdown() {
+            differs = true;
+            println!(
+                "解説: 形式が違います (yukicoder: {}, ローカル: {})",
+                format_kind(editorial.is_markdown),
+                format_kind(local_editorial.is_markdown())
+            );
+        }
         differs |= print_text_diff("解説", &editorial.content, local_editorial.text());
     }
 
@@ -182,8 +191,8 @@ fn print_text_diff(what: &str, remote: &str, local: &str) -> bool {
     true
 }
 
-fn format_kind(statement: &Statement) -> &'static str {
-    if statement.is_markdown() {
+fn format_kind(is_markdown: bool) -> &'static str {
+    if is_markdown {
         "Markdown"
     } else {
         "HTML"

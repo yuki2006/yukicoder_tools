@@ -52,13 +52,18 @@ pub fn pull_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> 
     if generator.source.trim().is_empty() {
         println!("  ジェネレータ: 未登録");
     } else {
-        let source_file = existing_generator_source_file(dir)
+        // ソースファイル名と prefix はクライアント側にしか無い設定なので、
+        // 既存の generator.toml から引き継ぐ (API のレスポンスには含まれない)。
+        let existing = dir.existing_generator_config()?;
+        let source_file = existing
+            .as_ref()
+            .map(|config| config.source_file.clone())
             .unwrap_or_else(|| source_file_name("generator", &generator.lang_id));
         let config = GeneratorConfig {
             lang_id: generator.lang_id.clone(),
             source_file: source_file.clone(),
             test_case_num: generator.test_case_num,
-            prefix: None,
+            prefix: existing.and_then(|config| config.prefix),
         };
         dir.write_generator(&config, &generator.source)?;
         println!(
@@ -78,7 +83,9 @@ pub fn pull_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> 
         None => println!("  ジャッジコード: このサーバはジャッジコードの API に対応していません"),
         Some(code) if code.source.trim().is_empty() => println!("  ジャッジコード: 未登録"),
         Some(code) => {
-            let source_file = existing_judge_source_file(dir)
+            let source_file = dir
+                .existing_judge_config()?
+                .map(|config| config.source_file)
                 .unwrap_or_else(|| source_file_name("judge", &code.lang_id));
             let config = JudgeConfig {
                 lang_id: code.lang_id.clone(),
@@ -128,20 +135,6 @@ pub fn pull_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> 
     }
 
     Ok(())
-}
-
-/// すでにローカルにあるジェネレータのソースファイル名を使い回す。
-fn existing_generator_source_file(dir: &ProblemDir) -> Option<String> {
-    dir.read_generator()
-        .ok()
-        .map(|(config, _)| config.source_file)
-}
-
-/// すでにローカルにあるジャッジコードのソースファイル名を使い回す。
-fn existing_judge_source_file(dir: &ProblemDir) -> Option<String> {
-    dir.read_judge_code()
-        .ok()
-        .map(|(config, _)| config.source_file)
 }
 
 /// 初めて取得したときのソースファイル名。言語 ID から拡張子を決める。

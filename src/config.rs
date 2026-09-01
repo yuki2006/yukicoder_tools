@@ -22,8 +22,12 @@ pub const DOTENV_FILE: &str = ".env";
 /// 探し、その `problemId` で決まる。一覧を二重に持つと、ディレクトリを増やした
 /// ときに片方だけ更新して食い違う。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// 問題ディレクトリを置く場所。既定は `problems`。
+    ///
+    /// 全キーに既定値があるので、キーを打ち間違えると黙って既定値が使われて
+    /// しまう。それを防ぐため未知のキーはエラーにする (`deny_unknown_fields`)。
     #[serde(default = "default_problems_dir")]
     pub problems_dir: String,
     /// API のベース URL。既定は `https://yukicoder.me/api`。
@@ -131,10 +135,21 @@ impl Repo {
         if let Some(problem) = self.problems()?.into_iter().find(|p| p.id == problem_id) {
             return Ok(problem.dir);
         }
-        Ok(self
+        let fallback = self
             .root
             .join(&self.config.problems_dir)
-            .join(problem_id.to_string()))
+            .join(problem_id.to_string());
+        // ここまで来たのは、この ID の問題がリポジトリに無いから。それでも
+        // 既定の場所に problem.toml があるなら、そこは別の問題のディレクトリで、
+        // 書き込むと壊してしまう (problems/ は gitignore 済みで復元もできない)。
+        if fallback.join(crate::local::SETTINGS_FILE).is_file() {
+            bail!(
+                "{} は別の問題のディレクトリです (problem.toml の problemId が {problem_id} \
+                 ではありません)。",
+                display_path(&fallback)
+            );
+        }
+        Ok(fallback)
     }
 
     /// コマンドで対象にする問題 ID を決める。
@@ -262,10 +277,21 @@ pub fn load_dotenv(path: &Path) -> Result<HashMap<String, String>> {
 ///
 /// それぞれ環境変数を先に見て、無ければ `.env` を見る。既定値は持たない。
 pub fn resolve_token(repo_root: &Path, problem_id: i64) -> Result<String> {
-    let dotenv = load_dotenv(&repo_root.join(DOTENV_FILE))?;
     let keys = token_keys(problem_id);
+    // .env が壊れていても、環境変数でトークンが決まるなら止めない。
+    // 環境変数が優先という順序を、.env のパースエラーで覆さないため。
+    let (dotenv, dotenv_error) = match load_dotenv(&repo_root.join(DOTENV_FILE)) {
+        Ok(vars) => (vars, None),
+        Err(err) => (HashMap::new(), Some(err)),
+    };
     if let Some(token) = select_token(&keys, |key| std::env::var(key).ok(), &dotenv) {
+        if let Some(err) = dotenv_error {
+            eprintln!("警告: {err:#}。環境変数のトークンを使います。");
+        }
         return Ok(token);
+    }
+    if let Some(err) = dotenv_error {
+        return Err(err);
     }
     bail!(
         "トークンが見つかりません。次のいずれかを環境変数か {DOTENV_FILE} に設定してください: {}\n\
@@ -540,5 +566,22 @@ mod tests {
         let repo = repo_with(&[], "unknown");
         assert!(repo.problem_dir(13954).unwrap().ends_with("problems/13954"));
         assert!(repo.target_problems(None, false).is_err());
+    }
+
+    /// フォールバック先が別の問題のディレクトリなら、書き込ませない。
+    /// pull がそこへ書くと、別の問題のローカルコピーを上書きしてしまう。
+    #[test]
+    fn fallback_owned_by_another_problem_is_rejected() {
+        // problems/100 というディレクトリ名だが、中身は問題 200。
+        let repo = repo_with(&[("100", Some(200))], "claimed");
+        assert!(repo.problem_dir(100).is_err());
+        assert!(repo.problem_dir(200).unwrap().ends_with("100"));
+    }
+
+    /// キーの打ち間違いを黙って既定値にしない。
+    #[test]
+    fn unknown_config_keys_are_rejected() {
+        assert!(toml::from_str::<Config>("problem_dir = \"contests\"").is_err());
+        assert!(toml::from_str::<Config>("problems_dir = \"contests\"").is_ok());
     }
 }

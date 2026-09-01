@@ -122,6 +122,24 @@ fn judge_code_is_parsed_when_available() {
     server.join().unwrap();
 }
 
+/// サーバ由来のテストケース名も検証する。ローカルパスに join し URL にも
+/// 埋め込むので、'/' や '..' を通すと外に書いてしまう。
+#[test]
+fn testcase_names_from_the_server_are_validated() {
+    for (payload, ok) in [
+        (r#"["1.txt","sample_1.txt"]"#, true),
+        (r#"["../evil"]"#, false),
+        (r#"["a/b.txt"]"#, false),
+        (r#"[""]"#, false),
+    ] {
+        let (base_url, server) = serve_once(200, payload);
+        let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+        let result = client.list_testcases(13954, super::models::Which::In);
+        assert_eq!(result.is_ok(), ok, "{payload}");
+        server.join().unwrap();
+    }
+}
+
 fn request() -> ProblemEditRequest {
     let settings = ProblemSettings {
         title: "タイトル".into(),

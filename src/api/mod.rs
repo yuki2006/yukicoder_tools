@@ -261,10 +261,18 @@ impl YukicoderClient {
     // ---- テストケース ---------------------------------------------------
 
     pub fn list_testcases(&self, problem_id: i64, which: Which) -> Result<Vec<String>> {
-        self.get_json(
+        let names: Vec<String> = self.get_json(
             &format!("/v1/problems/{problem_id}/file/{which}"),
             "テストケース一覧の取得",
-        )
+        )?;
+        // 名前はローカルパスに join し、URL のパスにも埋め込む。サーバ由来でも
+        // 検証してから使う ('/' や '..' が混ざると外に書いてしまう)。
+        for name in &names {
+            if name.is_empty() || crate::local::sanitized_file_name(name) != *name {
+                bail!("サーバが想定外のテストケース名を返しました: {name:?}");
+            }
+        }
+        Ok(names)
     }
 
     /// テストケース 1 件の中身を、保存されているバイト列のまま取得する。

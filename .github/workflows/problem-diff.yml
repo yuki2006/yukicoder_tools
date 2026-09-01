@@ -7,6 +7,8 @@ name: 問題の差分チェック
 on:
   pull_request:
     paths:
+      # yukicoder.toml の problems_dir を変えたら、ここも合わせて変えること
+      # (トリガーのパスは設定ファイルから導けない)。
       - "problems/**"
       - "yukicoder.toml"
 

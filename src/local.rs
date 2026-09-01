@@ -201,6 +201,21 @@ impl ProblemDir {
         self.generator_config_path().is_file()
     }
 
+    /// 既存の `generator.toml` を読む。無ければ `None`。
+    ///
+    /// ファイルがあるのに読めない場合はエラーにする。壊れた設定を「無い」と
+    /// 同一視すると、pull が黙って既定の内容で作り直してしまう。
+    pub fn existing_generator_config(&self) -> Result<Option<GeneratorConfig>> {
+        let path = self.generator_config_path();
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let text = read_text(&path)?;
+        toml::from_str(&text)
+            .map(Some)
+            .with_context(|| format!("{} を解釈できませんでした", display_path(&path)))
+    }
+
     pub fn read_generator(&self) -> Result<(GeneratorConfig, String)> {
         let path = self.generator_config_path();
         let text = read_text(&path)?;
@@ -229,6 +244,18 @@ impl ProblemDir {
 
     pub fn has_judge_code(&self) -> bool {
         self.judge_config_path().is_file()
+    }
+
+    /// 既存の `judge.toml` を読む。無ければ `None`、壊れていたらエラー。
+    pub fn existing_judge_config(&self) -> Result<Option<JudgeConfig>> {
+        let path = self.judge_config_path();
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let text = read_text(&path)?;
+        toml::from_str(&text)
+            .map(Some)
+            .with_context(|| format!("{} を解釈できませんでした", display_path(&path)))
     }
 
     pub fn read_judge_code(&self) -> Result<(JudgeConfig, String)> {

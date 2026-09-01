@@ -45,16 +45,22 @@ jobs:
           YUKICODER_TOKEN: ${{ secrets.YUKICODER_TOKEN }}
         run: ./target/release/yuki pull --all
 
+      - name: problems_dir を読む
+        run: |
+          # git status / add のパスは yukicoder.toml の設定に合わせる。
+          dir=$(sed -n 's/^problems_dir *= *"\(.*\)"/\1/p' yukicoder.toml)
+          echo "PROBLEMS_DIR=${dir:-problems}" >> "$GITHUB_ENV"
+
       - name: 差分があるか確認する
         id: check
         run: |
           # 新しく増えたファイルも見たいので、diff ではなく status で判定する。
-          if [ -z "$(git status --porcelain -- problems)" ]; then
+          if [ -z "$(git status --porcelain -- "$PROBLEMS_DIR")" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "リポジトリと yukicoder は一致しています。"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            git status --short -- problems
+            git status --short -- "$PROBLEMS_DIR"
           fi
 
       - name: 取り込む PR を作る
@@ -67,7 +73,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git add problems
+          git add -- "$PROBLEMS_DIR"
           git commit -m "yukicoder 側の変更を取り込む"
           git push origin "$branch"
           gh pr create \
