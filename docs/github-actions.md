@@ -37,6 +37,15 @@ cargo run -- init 13954
 ディレクトリ名は後から自由に変えられます。どの問題かは `problem.toml` の `problemId` で
 決まるので、`problems/tutorial-dp/` や `problems/abc001/a/` のような置き方もできます。
 
+2 問目からは `yuki new` を使います。yukicoder で問題を作って ID とトークンを発行したら、
+
+```sh
+cargo run -- new 20000 --dir abc001/a
+```
+
+で `problems/abc001/a/` に問題一式 (設定・問題文テンプレート・testcases/ solutions/ の
+骨組み) ができます。
+
 ## 2. 更新する
 
 ### 問題文や設定を変える

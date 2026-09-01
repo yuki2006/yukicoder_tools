@@ -1,6 +1,7 @@
 pub mod diff;
 pub mod init;
 pub mod languages;
+pub mod new;
 pub mod pull;
 pub mod push;
 pub mod submit;

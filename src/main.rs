@@ -40,6 +40,14 @@ enum Command {
         #[arg(long)]
         no_testcases: bool,
     },
+    /// 問題のディレクトリ一式を作る (yukicoder で問題を作った直後に使う)
+    New {
+        /// 問題 ID
+        problem_id: i64,
+        /// 置き場所 (problems ディレクトリからの相対。省略時は問題 ID)
+        #[arg(long)]
+        dir: Option<String>,
+    },
     /// yukicoder の内容をローカルに取得する
     Pull {
         #[command(flatten)]
@@ -123,9 +131,9 @@ enum Command {
 /// 対象の問題を指定する共通の引数。
 #[derive(Debug, Args)]
 pub struct Target {
-    /// 問題 ID (省略時は yukicoder.toml の problems が 1 つならそれ)
+    /// 問題 ID (省略時は、リポジトリに問題が 1 つならそれ)
     pub problem_id: Option<i64>,
-    /// yukicoder.toml の problems すべてを対象にする
+    /// リポジトリにあるすべての問題を対象にする
     #[arg(long)]
     pub all: bool,
 }
@@ -144,6 +152,7 @@ fn run() -> Result<()> {
             problem_id,
             no_testcases,
         } => commands::init::run(problem_id, !no_testcases),
+        Command::New { problem_id, dir } => commands::new::run(problem_id, dir),
         Command::Pull {
             target,
             no_testcases,
