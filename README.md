@@ -161,3 +161,7 @@ WebUI で編集したときは、`problem-pull.yml` が作る PR を先にマー
 ## ライセンス
 
 Apache License 2.0 ([LICENSE](LICENSE))
+
+---
+
+Powered by [Claude Code](https://claude.com/claude-code)
