@@ -37,10 +37,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 問題データの無いリポジトリ (ツール本体だけを置く場合) では何もしない。
+      - name: 問題データがあるか確認する
+        id: problems
+        run: |
+          dir=$(sed -n 's/^problems_dir *= *"\(.*\)"/\1/p' yukicoder.toml)
+          dir=${dir:-problems}
+          echo "PROBLEMS_DIR=$dir" >> "$GITHUB_ENV"
+          if [ -d "$dir" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "問題データ ($dir/) が無いのでスキップします。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Rust をセットアップ
+        if: steps.problems.outputs.found == 'true'
         run: rustup toolchain install stable --profile minimal
 
       - name: 依存とビルド結果をキャッシュ
+        if: steps.problems.outputs.found == 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -50,9 +66,11 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - run: cargo build --release
+      - if: steps.problems.outputs.found == 'true'
+        run: cargo build --release
 
       - name: 反映する
+        if: steps.problems.outputs.found == 'true'
         env:
           YUKICODER_TOKEN: ${{ secrets.YUKICODER_TOKEN }}
         run: |
@@ -82,15 +100,14 @@ jobs:
       # main が branch protection で守られている場合は、bot の push を許可するか、
       # この step を外して手元で `yuki-tool pull` してコミットすること。
       - name: サーバ側で調整された内容をコミットする
+        if: steps.problems.outputs.found == 'true'
         run: |
-          dir=$(sed -n 's/^problems_dir *= *"\(.*\)"/\1/p' yukicoder.toml)
-          dir=${dir:-problems}
-          if [ -z "$(git status --porcelain -- "$dir")" ]; then
+          if [ -z "$(git status --porcelain -- "$PROBLEMS_DIR")" ]; then
             echo "書き戻しはありません。"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- "$dir"
+          git add -- "$PROBLEMS_DIR"
           git commit -m "yukicoder 側で調整されたテストケースを取り込む"
           git push
