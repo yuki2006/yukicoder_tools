@@ -118,6 +118,11 @@ impl ProblemDir {
     pub fn write_settings(&self, settings: &ProblemSettings) -> Result<()> {
         let body =
             toml::to_string_pretty(settings).context("問題設定を TOML にできませんでした")?;
+        // 数値コードのままだと意味が分からないので、名前で書き出す
+        // (読むときは名前でも数値でも受け付ける)。
+        let body = replace_coded_line(&body, "problemType", settings.problem_type.label());
+        let body = replace_coded_line(&body, "judgeType", settings.judge_type.label());
+        let body = replace_coded_line(&body, "epsMode", settings.eps_mode.label());
         let text = format!(
             "# yukicoder 問題設定。どの問題かは problemId で決まる (ディレクトリ名は自由)。\n\
              # 他のキーは PUT /api/v1/problems/{{id}}/edit と同じ名前で、変更したら\n\
@@ -335,6 +340,27 @@ impl ProblemDir {
     }
 }
 
+/// 生成した TOML の `key = <数値>` の行を、名前の行に置き換える。
+///
+/// 直前に自分で生成したテキストだけを対象にするので、行の形は決まっている。
+fn replace_coded_line(body: &str, key: &str, label: Option<&str>) -> String {
+    let Some(label) = label else {
+        // 未知の数値コード。名前が無いのでそのままにする。
+        return body.to_string();
+    };
+    body.lines()
+        .map(|line| {
+            if line.starts_with(&format!("{key} = ")) {
+                format!("{key} = \"{label}\"")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
 /// `.md` と `.html` のどちらか片方だけを読む。
 fn read_one_of(markdown: &Path, html: &Path, what: &str) -> Result<Statement> {
     match (markdown.is_file(), html.is_file()) {
@@ -445,6 +471,22 @@ mod tests {
     fn text_line_endings_become_lf() {
         assert_eq!(normalize("a\r\nb\rc"), "a\nb\nc");
         assert_eq!(normalize("\u{feff}a"), "a", "BOM を落とす");
+    }
+
+    /// 生成した problem.toml では数値コードが名前になる。
+    #[test]
+    fn coded_lines_are_written_with_names() {
+        let body = "problemType = 1\njudgeType = 2\nepsMode = \"abs\"\ntimeLimitMs = 2000\n";
+        let body = replace_coded_line(body, "problemType", Some("教育的"));
+        let body = replace_coded_line(&body, "judgeType", Some("リアクティブ"));
+        let body = replace_coded_line(&body, "epsMode", Some("絶対誤差"));
+        // 未知のコードは名前が無いので、そのまま残る。
+        let body = replace_coded_line(&body, "timeLimitMs", None);
+        assert_eq!(
+            body,
+            "problemType = \"教育的\"\njudgeType = \"リアクティブ\"\n\
+             epsMode = \"絶対誤差\"\ntimeLimitMs = 2000\n"
+        );
     }
 
     /// ファイル名は A-Za-z0-9._ 以外が落ちる。

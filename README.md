@@ -78,6 +78,8 @@ problems/<好きな名前>/        どの問題かは problem.toml の problemId
   solutions/                提出用のソース (同期対象ではない)
 ```
 
+- **`problemType` / `judgeType` / `epsMode` は名前で書けます** (例: `judgeType = "スペシャル"`、
+  `epsMode = "絶対誤差"`)。数値や API の記号でも受け付けますが、`pull` は名前で書き出します。
 - **どの問題かは `problem.toml` の `problemId` で決まります。** ディレクトリ名は自由なので、
   `problems/tutorial-dp/` や `problems/abc001/a/` のように置けます。`problems_dir` 以下を
   降りて `problem.toml` を探すので、管理対象の一覧をどこかに書く必要はありません。
@@ -106,8 +108,8 @@ problems/<好きな名前>/        どの問題かは problem.toml の problemId
 **確定するのは `AC` と `CE` だけ**で、途中の状態を失敗として扱わないようにしています。
 ソースを空にすると削除になり、この場合はコンパイルが走らないので待ちません。
 
-`problem.toml` の `judgeType` が 0 (標準) のままだと、ジャッジコードは保存できても使われません。
-`judgeType` を 1 (スペシャル) 以上にしてください。`push` は問題設定を先に送るので、
+`problem.toml` の `judgeType` が "通常" のままだと、ジャッジコードは保存できても使われません。
+`judgeType` を "スペシャル" などにしてください。`push` は問題設定を先に送るので、
 同じコミットで両方を変えれば 1 回で反映されます。
 
 ## CI/CD
@@ -125,7 +127,9 @@ problems/<好きな名前>/        どの問題かは problem.toml の problemId
   内容があれば取り込む PR を作る (定期実行はしない)
 
 反映は last-write-wins です。WebUI 側で直接編集した内容は push で上書きされます。
-WebUI で編集したときは、`problem-pull.yml` が作る PR を先にマージしてください。
+WebUI で編集した内容を取り込む手段は 2 つ用意しています。手元で `yuki-tool pull` して
+コミットするか、`problem-pull.yml` を実行して取り込み PR を作るかです。
+どちらかを main に入れてから、リポジトリ側の編集を進めてください。
 
 > 未公開 (WIP) の問題を扱う場合、`problems/` を公開リポジトリに置くと問題文が公開されます。
 > 問題を管理するリポジトリは private にするか、ツール本体と問題データでリポジトリを分けてください。

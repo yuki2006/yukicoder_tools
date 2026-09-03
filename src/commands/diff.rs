@@ -166,12 +166,29 @@ fn settings_changes(
         if local_value != Some(remote_value) {
             changes.push((
                 key.clone(),
-                remote_value.to_string(),
-                local_value.map(|v| v.to_string()).unwrap_or_default(),
+                display_value(key, remote_value),
+                local_value
+                    .map(|v| display_value(key, v))
+                    .unwrap_or_default(),
             ));
         }
     }
     Ok(changes)
+}
+
+/// 数値コードには名前を添える (例: `1 (スペシャル)`)。
+fn display_value(key: &str, value: &serde_json::Value) -> String {
+    use crate::api::models::{EpsMode, JudgeType, ProblemType};
+    let label = match key {
+        "judgeType" => value.as_i64().and_then(|v| JudgeType(v).label()),
+        "problemType" => value.as_i64().and_then(|v| ProblemType(v).label()),
+        "epsMode" => value.as_str().and_then(|v| EpsMode(v.to_string()).label()),
+        _ => None,
+    };
+    match label {
+        Some(label) => format!("{value} ({label})"),
+        None => value.to_string(),
+    }
 }
 
 /// 差分があれば表示して true を返す。
