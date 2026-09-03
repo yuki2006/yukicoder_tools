@@ -35,7 +35,7 @@ jobs:
   push:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 問題データの無いリポジトリ (ツール本体だけを置く場合) では何もしない。
       - name: 問題データがあるか確認する
@@ -57,7 +57,7 @@ jobs:
 
       - name: 依存とビルド結果をキャッシュ
         if: steps.problems.outputs.found == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
