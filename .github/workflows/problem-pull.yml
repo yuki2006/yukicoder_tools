@@ -1,0 +1,97 @@
+name: yukicoder の変更を取り込む
+
+# WebUI で問題を直接編集すると、リポジトリと yukicoder がずれる。
+# pull して差分があれば PR を作る (反映の逆方向)。
+#
+# push の workflow は last-write-wins なので、ずれたまま main に何か入ると
+# WebUI 側の編集が消える。それを防ぐための入口。
+#
+# 定期実行はしない。WebUI で編集したときに Actions から手で動かす。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: yukicoder-pull
+  cancel-in-progress: true
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 問題データの無いリポジトリ (ツール本体だけを置く場合) では何もしない。
+      # git status / add のパスも yukicoder.toml の設定に合わせる。
+      - name: 問題データがあるか確認する
+        id: problems
+        run: |
+          dir=$(sed -n 's/^problems_dir *= *"\(.*\)"/\1/p' yukicoder.toml)
+          dir=${dir:-problems}
+          echo "PROBLEMS_DIR=$dir" >> "$GITHUB_ENV"
+          if [ -d "$dir" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "問題データ ($dir/) が無いのでスキップします。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Rust をセットアップ
+        if: steps.problems.outputs.found == 'true'
+        run: rustup toolchain install stable --profile minimal
+
+      - name: 依存とビルド結果をキャッシュ
+        if: steps.problems.outputs.found == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - if: steps.problems.outputs.found == 'true'
+        run: cargo build --release
+
+      - name: yukicoder から取得する
+        if: steps.problems.outputs.found == 'true'
+        env:
+          YUKICODER_TOKEN: ${{ secrets.YUKICODER_TOKEN }}
+        run: ./target/release/yuki-tool pull --all
+
+      - name: 差分があるか確認する
+        id: check
+        if: steps.problems.outputs.found == 'true'
+        run: |
+          # 新しく増えたファイルも見たいので、diff ではなく status で判定する。
+          if [ -z "$(git status --porcelain -- "$PROBLEMS_DIR")" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "リポジトリと yukicoder は一致しています。"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --short -- "$PROBLEMS_DIR"
+          fi
+
+      - name: 取り込む PR を作る
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ github.ref_name }}
+        run: |
+          branch="sync/yukicoder-$(date +%Y%m%d-%H%M%S)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add -- "$PROBLEMS_DIR"
+          git commit -m "yukicoder 側の変更を取り込む"
+          git push origin "$branch"
+          gh pr create \
+            --title "yukicoder 側の変更を取り込む" \
+            --body "yukicoder 側にあってリポジトリに無い変更を \`yuki-tool pull\` で取り込みました。マージするとリポジトリが yukicoder に追いつきます。" \
+            --base "$BASE_BRANCH" \
+            --head "$branch"

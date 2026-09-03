@@ -1,0 +1,113 @@
+name: 問題を yukicoder に反映
+
+# main に入った内容を yukicoder に反映する。リポジトリが正で、last-write-wins。
+# WebUI 側で直接編集した内容は、ここで上書きされる。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # yukicoder.toml の problems_dir を変えたら、ここも合わせて変えること
+      # (トリガーのパスは設定ファイルから導けない)。
+      - "problems/**"
+      - "yukicoder.toml"
+  workflow_dispatch:
+    inputs:
+      prune:
+        description: "ローカルに無いテストケースを yukicoder から削除する"
+        type: boolean
+        default: false
+      dry_run:
+        description: "送信内容を表示するだけで反映しない"
+        type: boolean
+        default: false
+
+concurrency:
+  # 反映は last-write-wins なので、同時に走らせない。
+  group: yukicoder-push
+  cancel-in-progress: false
+
+permissions:
+  # サーバ側で調整されたテストケースをコミットで取り込むため。
+  contents: write
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 問題データの無いリポジトリ (ツール本体だけを置く場合) では何もしない。
+      - name: 問題データがあるか確認する
+        id: problems
+        run: |
+          dir=$(sed -n 's/^problems_dir *= *"\(.*\)"/\1/p' yukicoder.toml)
+          dir=${dir:-problems}
+          echo "PROBLEMS_DIR=$dir" >> "$GITHUB_ENV"
+          if [ -d "$dir" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "問題データ ($dir/) が無いのでスキップします。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Rust をセットアップ
+        if: steps.problems.outputs.found == 'true'
+        run: rustup toolchain install stable --profile minimal
+
+      - name: 依存とビルド結果をキャッシュ
+        if: steps.problems.outputs.found == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - if: steps.problems.outputs.found == 'true'
+        run: cargo build --release
+
+      - name: 反映する
+        if: steps.problems.outputs.found == 'true'
+        env:
+          YUKICODER_TOKEN: ${{ secrets.YUKICODER_TOKEN }}
+        run: |
+          # pipefail が無いと、yuki の失敗が tee の 0 に置き換わって
+          # workflow が成功扱いになる。
+          set -o pipefail
+          args=(push --all)
+          if [ "${{ inputs.prune }}" = "true" ]; then args+=(--prune); fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then args+=(--dry-run); fi
+          status=0
+          ./target/release/yuki-tool "${args[@]}" | tee push.txt || status=$?
+          {
+            echo "## yukicoder への反映"
+            echo
+            echo '```'
+            cat push.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      # yukicoder は保存時にテストケースを書き換えることがあり、yuki-tool push は
+      # その結果を作業ツリーへ書き戻す。ここでコミットしないと使い捨ての
+      # チェックアウトごと捨てられ、以後の diff と push が同じファイルを
+      # 差分ありとして扱い続ける。
+      # このコミットは problems/** に当たって本 workflow をもう一度起動するが、
+      # 2 回目は差分が無くコミットもしないので、そこで止まる。
+      # main が branch protection で守られている場合は、bot の push を許可するか、
+      # この step を外して手元で `yuki-tool pull` してコミットすること。
+      - name: サーバ側で調整された内容をコミットする
+        if: steps.problems.outputs.found == 'true'
+        run: |
+          if [ -z "$(git status --porcelain -- "$PROBLEMS_DIR")" ]; then
+            echo "書き戻しはありません。"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "$PROBLEMS_DIR"
+          git commit -m "yukicoder 側で調整されたテストケースを取り込む"
+          git push

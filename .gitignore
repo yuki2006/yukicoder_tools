@@ -1,0 +1,11 @@
+/target
+Cargo.lock.orig
+
+# トークンを置く場所。絶対にコミットしない。
+.env
+.env.*
+!.env.example
+
+# 問題データはこのリポジトリでは管理しない。
+# 未公開 (WIP) の問題文を公開リポジトリに載せないため。
+/problems/

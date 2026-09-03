@@ -1,0 +1,74 @@
+name: 問題の差分チェック
+
+# PR で problems/ を触ったとき、yukicoder 側との差分をジョブサマリに出す。
+# 差分があること自体は失敗にしない (PR は「これから反映する変更」なので)。
+# 落とすのは、設定ファイルが壊れているなど yuki 自体がエラーになった場合だけ。
+
+on:
+  pull_request:
+    paths:
+      # yukicoder.toml の problems_dir を変えたら、ここも合わせて変えること
+      # (トリガーのパスは設定ファイルから導けない)。
+      - "problems/**"
+      - "yukicoder.toml"
+
+jobs:
+  diff:
+    # フォークからの PR には Secrets が渡らないので実行しない。
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 問題データの無いリポジトリ (ツール本体だけを置く場合) では何もしない。
+      - name: 問題データがあるか確認する
+        id: problems
+        run: |
+          dir=$(sed -n 's/^problems_dir *= *"\(.*\)"/\1/p' yukicoder.toml)
+          dir=${dir:-problems}
+          echo "PROBLEMS_DIR=$dir" >> "$GITHUB_ENV"
+          if [ -d "$dir" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "問題データ ($dir/) が無いのでスキップします。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Rust をセットアップ
+        if: steps.problems.outputs.found == 'true'
+        run: rustup toolchain install stable --profile minimal
+
+      - name: 依存とビルド結果をキャッシュ
+        if: steps.problems.outputs.found == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - if: steps.problems.outputs.found == 'true'
+        run: cargo build --release
+
+      - name: 差分を出す
+        if: steps.problems.outputs.found == 'true'
+        env:
+          YUKICODER_TOKEN: ${{ secrets.YUKICODER_TOKEN }}
+        run: |
+          set -o pipefail
+          status=0
+          ./target/release/yuki-tool diff --all --exit-code > diff.txt 2>&1 || status=$?
+          {
+            echo "## yukicoder との差分"
+            echo
+            echo '```diff'
+            cat diff.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat diff.txt
+          # 2 = 差分あり (想定内)。それ以外の非ゼロは実行時エラー。
+          if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
+            exit "$status"
+          fi
