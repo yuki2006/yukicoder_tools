@@ -29,10 +29,24 @@ main にマージされた内容を GitHub Actions が yukicoder へ反映する
 
 ## インストール
 
+### バイナリで入れる
+
+[Releases](https://github.com/yuki2006/yukicoder_tools/releases) から OS に合った
+アーカイブをダウンロードし、中の `yuki-tool` を PATH の通った場所に置きます。
+Linux (x86_64)、Windows (x86_64)、macOS (Apple Silicon / Intel) を用意しています。
+
+### ソースからビルドする
+
+Rust のツールチェーン ([rustup](https://rustup.rs/)) が必要です。
+
 ```sh
+git clone https://github.com/yuki2006/yukicoder_tools.git
+cd yukicoder_tools
 cargo build --release
-# target/release/yuki-tool
+# 実行ファイル: target/release/yuki-tool
 ```
+
+`cargo install --path .` を使うと、`yuki-tool` コマンドとして PATH に入ります。
 
 ## トークン
 
