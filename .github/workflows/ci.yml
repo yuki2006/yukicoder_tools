@@ -12,13 +12,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Rust をセットアップ
         run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
 
       - name: 依存とビルド結果をキャッシュ
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
