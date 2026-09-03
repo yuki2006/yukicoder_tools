@@ -24,7 +24,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::api::models::{ProblemSettings, Statement, Which};
+use crate::api::models::{
+    ProblemSettings, Statement, Which, EPS_MODE_LABELS, JUDGE_TYPE_LABELS, PROBLEM_TYPE_LABELS,
+};
 
 pub const SETTINGS_FILE: &str = "problem.toml";
 pub const GENERATOR_CONFIG_FILE: &str = "generator.toml";
@@ -118,11 +120,18 @@ impl ProblemDir {
     pub fn write_settings(&self, settings: &ProblemSettings) -> Result<()> {
         let body =
             toml::to_string_pretty(settings).context("問題設定を TOML にできませんでした")?;
-        // 数値コードのままだと意味が分からないので、名前で書き出す
-        // (読むときは名前でも数値でも受け付ける)。
-        let body = replace_coded_line(&body, "problemType", settings.problem_type.label());
-        let body = replace_coded_line(&body, "judgeType", settings.judge_type.label());
-        let body = replace_coded_line(&body, "epsMode", settings.eps_mode.label());
+        // 数値コードのままだと意味が分からないので、コメントで意味を添える。
+        let body = annotate_line(&body, "problemType", &code_comment(PROBLEM_TYPE_LABELS));
+        let body = annotate_line(&body, "judgeType", &code_comment(JUDGE_TYPE_LABELS));
+        let body = annotate_line(
+            &body,
+            "epsMode",
+            &EPS_MODE_LABELS
+                .iter()
+                .map(|(code, label)| format!("\"{code}\":{label}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
         let text = format!(
             "# yukicoder 問題設定。どの問題かは problemId で決まる (ディレクトリ名は自由)。\n\
              # 他のキーは PUT /api/v1/problems/{{id}}/edit と同じ名前で、変更したら\n\
@@ -340,18 +349,23 @@ impl ProblemDir {
     }
 }
 
-/// 生成した TOML の `key = <数値>` の行を、名前の行に置き換える。
+/// 数値コードの意味をコメントにする (例: `0:通常 1:スペシャル 2:リアクティブ`)。
+fn code_comment(labels: &[(i64, &str)]) -> String {
+    labels
+        .iter()
+        .map(|(code, label)| format!("{code}:{label}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// 生成した TOML の `key = ...` の行に、意味を書いたコメントを添える。
 ///
 /// 直前に自分で生成したテキストだけを対象にするので、行の形は決まっている。
-fn replace_coded_line(body: &str, key: &str, label: Option<&str>) -> String {
-    let Some(label) = label else {
-        // 未知の数値コード。名前が無いのでそのままにする。
-        return body.to_string();
-    };
+fn annotate_line(body: &str, key: &str, comment: &str) -> String {
     body.lines()
         .map(|line| {
             if line.starts_with(&format!("{key} = ")) {
-                format!("{key} = \"{label}\"")
+                format!("{line} # {comment}")
             } else {
                 line.to_string()
             }
@@ -473,20 +487,18 @@ mod tests {
         assert_eq!(normalize("\u{feff}a"), "a", "BOM を落とす");
     }
 
-    /// 生成した problem.toml では数値コードが名前になる。
+    /// 生成した problem.toml では数値コードの行に意味のコメントが付く。
     #[test]
-    fn coded_lines_are_written_with_names() {
-        let body = "problemType = 1\njudgeType = 2\nepsMode = \"abs\"\ntimeLimitMs = 2000\n";
-        let body = replace_coded_line(body, "problemType", Some("教育的"));
-        let body = replace_coded_line(&body, "judgeType", Some("リアクティブ"));
-        let body = replace_coded_line(&body, "epsMode", Some("絶対誤差"));
-        // 未知のコードは名前が無いので、そのまま残る。
-        let body = replace_coded_line(&body, "timeLimitMs", None);
+    fn coded_lines_are_annotated() {
+        let body = "judgeType = 2\ntimeLimitMs = 2000\n";
+        let body = annotate_line(body, "judgeType", &code_comment(JUDGE_TYPE_LABELS));
         assert_eq!(
             body,
-            "problemType = \"教育的\"\njudgeType = \"リアクティブ\"\n\
-             epsMode = \"絶対誤差\"\ntimeLimitMs = 2000\n"
+            "judgeType = 2 # 0:通常 1:スペシャル 2:リアクティブ\ntimeLimitMs = 2000\n"
         );
+        // コメント付きでも TOML として読める。
+        let parsed: toml::Value = toml::from_str(&body).unwrap();
+        assert_eq!(parsed["judgeType"].as_integer(), Some(2));
     }
 
     /// ファイル名は A-Za-z0-9._ 以外が落ちる。

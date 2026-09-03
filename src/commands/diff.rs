@@ -178,11 +178,11 @@ fn settings_changes(
 
 /// 数値コードには名前を添える (例: `1 (スペシャル)`)。
 fn display_value(key: &str, value: &serde_json::Value) -> String {
-    use crate::api::models::{EpsMode, JudgeType, ProblemType};
+    use crate::api::models::{eps_mode_label, judge_type_label, problem_type_label};
     let label = match key {
-        "judgeType" => value.as_i64().and_then(|v| JudgeType(v).label()),
-        "problemType" => value.as_i64().and_then(|v| ProblemType(v).label()),
-        "epsMode" => value.as_str().and_then(|v| EpsMode(v.to_string()).label()),
+        "judgeType" => value.as_i64().and_then(judge_type_label),
+        "problemType" => value.as_i64().and_then(problem_type_label),
+        "epsMode" => value.as_str().and_then(eps_mode_label),
         _ => None,
     };
     match label {

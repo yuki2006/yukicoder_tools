@@ -7,9 +7,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::thread::JoinHandle;
 
-use super::models::{
-    EpsMode, JudgeType, ProblemEditRequest, ProblemSettings, ProblemType, Statement,
-};
+use super::models::{ProblemEditRequest, ProblemSettings, Statement};
 use super::YukicoderClient;
 
 /// 受け取ったリクエストのメソッドを記録するだけのサーバ。
@@ -149,12 +147,12 @@ fn request() -> ProblemEditRequest {
         level: 1.0,
         time_limit_ms: 2000,
         memory_limit: 1024,
-        eps_mode: EpsMode("-".into()),
+        eps_mode: "-".into(),
         eps: "0.0".into(),
         wip: true,
         recruiting_tester: false,
-        problem_type: ProblemType(0),
-        judge_type: JudgeType(0),
+        problem_type: 0,
+        judge_type: 0,
         show_ans: true,
         enable_pure_judge: false,
         force_single_server_judge: false,

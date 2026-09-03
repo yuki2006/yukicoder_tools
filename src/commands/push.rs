@@ -132,17 +132,17 @@ fn push_one(client: &YukicoderClient, dir: &ProblemDir, options: Options) -> Res
 fn push_judge_code(
     client: &YukicoderClient,
     dir: &ProblemDir,
-    judge_type: crate::api::models::JudgeType,
+    judge_type: i64,
     options: Options,
 ) -> Result<()> {
     let problem_id = dir.problem_id();
     let (config, source) = dir.read_judge_code()?;
 
     // ジャッジタイプが通常のままだと、保存はできても使われない。
-    if judge_type.is_normal() {
+    if judge_type == 0 {
         println!(
-            "  ジャッジコード: 警告 problem.toml の judgeType が \"通常\" です。\
-             \"スペシャル\" などにしないとジャッジコードは使われません。"
+            "  ジャッジコード: 警告 problem.toml の judgeType が 0 (通常) です。\
+             1 (スペシャル) などにしないとジャッジコードは使われません。"
         );
     }
 

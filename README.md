@@ -78,8 +78,8 @@ problems/<好きな名前>/        どの問題かは problem.toml の problemId
   solutions/                提出用のソース (同期対象ではない)
 ```
 
-- **`problemType` / `judgeType` / `epsMode` は名前で書けます** (例: `judgeType = "スペシャル"`、
-  `epsMode = "絶対誤差"`)。数値や API の記号でも受け付けますが、`pull` は名前で書き出します。
+- `problemType` / `judgeType` / `epsMode` の値は API と同じ数値・記号のままですが、
+  `pull` が意味を書いたコメントを添えます (例: `judgeType = 1 # 0:通常 1:スペシャル 2:リアクティブ`)。
 - **どの問題かは `problem.toml` の `problemId` で決まります。** ディレクトリ名は自由なので、
   `problems/tutorial-dp/` や `problems/abc001/a/` のように置けます。`problems_dir` 以下を
   降りて `problem.toml` を探すので、管理対象の一覧をどこかに書く必要はありません。
@@ -108,8 +108,8 @@ problems/<好きな名前>/        どの問題かは problem.toml の problemId
 **確定するのは `AC` と `CE` だけ**で、途中の状態を失敗として扱わないようにしています。
 ソースを空にすると削除になり、この場合はコンパイルが走らないので待ちません。
 
-`problem.toml` の `judgeType` が "通常" のままだと、ジャッジコードは保存できても使われません。
-`judgeType` を "スペシャル" などにしてください。`push` は問題設定を先に送るので、
+`problem.toml` の `judgeType` が 0 (通常) のままだと、ジャッジコードは保存できても使われません。
+`judgeType` を 1 (スペシャル) などにしてください。`push` は問題設定を先に送るので、
 同じコミットで両方を変えれば 1 回で反映されます。
 
 ## CI/CD

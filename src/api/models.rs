@@ -38,17 +38,17 @@ pub struct ProblemSettings {
     pub time_limit_ms: i64,
     /// MB。
     pub memory_limit: i64,
-    /// 誤差許容の種類。problem.toml では名前でも書ける (例: "絶対誤差")。
-    pub eps_mode: EpsMode,
+    /// `-` / `abs` / `rel` / `all` ([`EPS_MODE_LABELS`])
+    pub eps_mode: String,
     /// 許容誤差。API は文字列でも数値でも返すので文字列として保持する。
     #[serde(deserialize_with = "de::string_or_number")]
     pub eps: String,
     pub wip: bool,
     pub recruiting_tester: bool,
-    /// problem.toml では名前でも数値でも書ける (例: "教育的")。
-    pub problem_type: ProblemType,
-    /// problem.toml では名前でも数値でも書ける (例: "スペシャル")。
-    pub judge_type: JudgeType,
+    /// 数値コード ([`PROBLEM_TYPE_LABELS`])
+    pub problem_type: i64,
+    /// 数値コード ([`JUDGE_TYPE_LABELS`])
+    pub judge_type: i64,
     /// テスト後解答表示。
     #[serde(default)]
     pub show_ans: bool,
@@ -61,143 +61,51 @@ pub struct ProblemSettings {
     pub allowed_langs: Vec<String>,
 }
 
-/// 問題タイプ。API 上は数値コード。
+/// `problemType` の数値コードの意味 (WebUI の表記)。
 ///
-/// 数値だけでは意味が分からないので、`problem.toml` では名前でも書ける。
-/// 未知の数値はそのまま保持する (サーバにタイプが増えても壊れないように)。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProblemType(pub i64);
+/// 値は数値のまま扱い、problem.toml のコメントと diff の表示にだけ使う。
+pub const PROBLEM_TYPE_LABELS: &[(i64, &str)] = &[
+    (0, "通常"),
+    (1, "教育的"),
+    (2, "スコア"),
+    (3, "ネタ"),
+    (4, "未証明"),
+    (5, "数学要素が高い"),
+    (6, "ショートコード"),
+];
 
-impl ProblemType {
-    /// WebUI の表記に合わせた名前。
-    pub const LABELS: &'static [(i64, &'static str)] = &[
-        (0, "通常"),
-        (1, "教育的"),
-        (2, "スコア"),
-        (3, "ネタ"),
-        (4, "未証明"),
-        (5, "数学要素が高い"),
-        (6, "ショートコード"),
-    ];
+/// `judgeType` の数値コードの意味。
+pub const JUDGE_TYPE_LABELS: &[(i64, &str)] =
+    &[(0, "通常"), (1, "スペシャル"), (2, "リアクティブ")];
 
-    pub fn label(self) -> Option<&'static str> {
-        label_of(Self::LABELS, self.0)
-    }
-}
+/// `epsMode` の値の意味。
+pub const EPS_MODE_LABELS: &[(&str, &str)] = &[
+    ("-", "なし"),
+    ("abs", "絶対誤差"),
+    ("rel", "相対誤差"),
+    ("all", "両方"),
+];
 
-/// ジャッジタイプ。API 上は数値コード。`problem.toml` では名前でも書ける。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct JudgeType(pub i64);
-
-impl JudgeType {
-    pub const LABELS: &'static [(i64, &'static str)] =
-        &[(0, "通常"), (1, "スペシャル"), (2, "リアクティブ")];
-
-    pub fn label(self) -> Option<&'static str> {
-        label_of(Self::LABELS, self.0)
-    }
-
-    /// 通常ジャッジ。ジャッジコードは保存できても使われない。
-    pub fn is_normal(self) -> bool {
-        self.0 == 0
-    }
-}
-
-fn label_of(labels: &'static [(i64, &'static str)], value: i64) -> Option<&'static str> {
-    labels
+pub fn problem_type_label(code: i64) -> Option<&'static str> {
+    PROBLEM_TYPE_LABELS
         .iter()
-        .find(|(code, _)| *code == value)
+        .find(|(c, _)| *c == code)
         .map(|(_, label)| *label)
 }
 
-/// 誤差許容の種類。API 上は `-` / `abs` / `rel` / `all`。
-///
-/// 記号だけでは意味が分からないので、`problem.toml` では名前でも書ける。
-/// 未知の値はそのまま保持する。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EpsMode(pub String);
-
-impl EpsMode {
-    pub const LABELS: &'static [(&'static str, &'static str)] = &[
-        ("-", "なし"),
-        ("abs", "絶対誤差"),
-        ("rel", "相対誤差"),
-        ("all", "両方"),
-    ];
-
-    pub fn label(&self) -> Option<&'static str> {
-        Self::LABELS
-            .iter()
-            .find(|(code, _)| *code == self.0)
-            .map(|(_, label)| *label)
-    }
+pub fn judge_type_label(code: i64) -> Option<&'static str> {
+    JUDGE_TYPE_LABELS
+        .iter()
+        .find(|(c, _)| *c == code)
+        .map(|(_, label)| *label)
 }
 
-impl Serialize for EpsMode {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0)
-    }
+pub fn eps_mode_label(code: &str) -> Option<&'static str> {
+    EPS_MODE_LABELS
+        .iter()
+        .find(|(c, _)| *c == code)
+        .map(|(_, label)| *label)
 }
-
-impl<'de> serde::Deserialize<'de> for EpsMode {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let raw = String::deserialize(deserializer)?;
-        let name = raw.trim();
-        let code = Self::LABELS
-            .iter()
-            .find(|(_, label)| *label == name)
-            .map(|(code, _)| (*code).to_string())
-            // 名前でなければ API の値そのものとして扱う (未知の値も通す)。
-            .unwrap_or_else(|| raw.clone());
-        Ok(EpsMode(code))
-    }
-}
-
-/// 数値コードは数値のまま送受信し、名前でも受け取れるようにする。
-macro_rules! coded_serde {
-    ($type:ident, $what:literal) => {
-        impl Serialize for $type {
-            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                serializer.serialize_i64(self.0)
-            }
-        }
-
-        impl<'de> serde::Deserialize<'de> for $type {
-            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                #[derive(Deserialize)]
-                #[serde(untagged)]
-                enum Raw {
-                    Code(i64),
-                    Name(String),
-                }
-                match Raw::deserialize(deserializer)? {
-                    Raw::Code(code) => Ok($type(code)),
-                    Raw::Name(name) => $type::LABELS
-                        .iter()
-                        .find(|(_, label)| *label == name.trim())
-                        .map(|(code, _)| $type(*code))
-                        .ok_or_else(|| {
-                            serde::de::Error::custom(format!(
-                                concat!(
-                                    $what,
-                                    " に {name:?} は使えません。使えるのは {labels} か数値です"
-                                ),
-                                name = name,
-                                labels = $type::LABELS
-                                    .iter()
-                                    .map(|(code, label)| format!("{code} ({label})"))
-                                    .collect::<Vec<_>>()
-                                    .join(", "),
-                            ))
-                        }),
-                }
-            }
-        }
-    };
-}
-
-coded_serde!(ProblemType, "problemType");
-coded_serde!(JudgeType, "judgeType");
 
 /// 問題文・解説の本文。Markdown と HTML は排他で、どちらか一方だけを送る。
 ///
@@ -459,12 +367,12 @@ mod tests {
             level: 2.5,
             time_limit_ms: 2000,
             memory_limit: 1024,
-            eps_mode: EpsMode("-".into()),
+            eps_mode: "-".into(),
             eps: "0.0".into(),
             wip: true,
             recruiting_tester: false,
-            problem_type: ProblemType(0),
-            judge_type: JudgeType(0),
+            problem_type: 0,
+            judge_type: 0,
             show_ans: true,
             enable_pure_judge: false,
             force_single_server_judge: false,
@@ -539,45 +447,13 @@ mod tests {
         assert_eq!(from_number.settings.eps, "0.001");
     }
 
-    /// problem.toml では数値コードを名前でも書ける。API へは数値で送る。
+    /// 数値コードに名前を引ける。problem.toml のコメントと diff の表示に使う。
     #[test]
-    fn coded_values_accept_names() {
-        let toml_text = r#"
-            title = "t"
-            tags = ""
-            level = 1.0
-            timeLimitMs = 2000
-            memoryLimit = 1024
-            epsMode = "絶対誤差"
-            eps = "0.000001"
-            wip = true
-            recruitingTester = false
-            problemType = "教育的"
-            judgeType = "スペシャル"
-        "#;
-        let parsed: ProblemSettings = toml::from_str(toml_text).unwrap();
-        assert_eq!(parsed.problem_type, ProblemType(1));
-        assert_eq!(parsed.judge_type, JudgeType(1));
-        assert_eq!(parsed.eps_mode, EpsMode("abs".into()));
-
-        // API へ送るときは数値・API の文字列に戻る。
-        let json = serde_json::to_value(&parsed).unwrap();
-        assert_eq!(json["problemType"], 1);
-        assert_eq!(json["judgeType"], 1);
-        assert_eq!(json["epsMode"], "abs");
-    }
-
-    /// 打ち間違えた名前は候補を出して止める。未知の数値はそのまま通す
-    /// (サーバにタイプが増えても壊れないように)。
-    #[test]
-    fn unknown_names_are_rejected_but_unknown_codes_pass() {
-        let err = serde_json::from_str::<JudgeType>(r#""すぺしゃる""#).unwrap_err();
-        assert!(err.to_string().contains("スペシャル"), "{err}");
-        assert_eq!(
-            serde_json::from_str::<JudgeType>("9").unwrap(),
-            JudgeType(9)
-        );
-        assert_eq!(JudgeType(9).label(), None);
+    fn code_labels_are_available() {
+        assert_eq!(judge_type_label(1), Some("スペシャル"));
+        assert_eq!(problem_type_label(6), Some("ショートコード"));
+        assert_eq!(eps_mode_label("abs"), Some("絶対誤差"));
+        assert_eq!(judge_type_label(9), None, "未知のコードは名前なし");
     }
 
     /// problem.toml は API と同じキー名で往復できる。
