@@ -353,8 +353,8 @@ fn fail_validation(problem_id: i64, status: &str) -> Result<()> {
 
 /// 「今のテストケースに対する検証結果」が出るまで待つ。時間切れなら `None`。
 ///
-/// 判定は [`crate::api::models::ValidatorContent::is_up_to_date`]。テストケース
-/// 更新直後は前回の終端値が返るため、status が終端かどうかだけでは足りない。
+/// 判定は [`crate::api::models::ValidatorContent::is_up_to_date`] (status が
+/// judging でない かつ 検証時刻がテストケース更新時刻より後)。
 fn wait_for_validation(
     client: &YukicoderClient,
     problem_id: i64,
