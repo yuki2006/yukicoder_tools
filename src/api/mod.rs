@@ -213,20 +213,11 @@ impl YukicoderClient {
 
     // ---- ジャッジコード (スペシャルジャッジ) -----------------------------
 
-    /// ジャッジコードを取得する。
-    ///
-    /// この API を持たないサーバでは 404 が返る。その場合は `None` を返し、
-    /// ほかの同期を止めない。
-    pub fn get_judge_code(&self, problem_id: i64) -> Result<Option<JudgeCodeContent>> {
-        let path = format!("/v1/problems/{problem_id}/code");
-        let res = self
-            .authed(self.http.get(self.url(&path)))
-            .send()
-            .context("ジャッジコードの取得リクエストを送信できませんでした")?;
-        if res.status() == StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        Self::parse_json(res, "ジャッジコードの取得").map(Some)
+    pub fn get_judge_code(&self, problem_id: i64) -> Result<JudgeCodeContent> {
+        self.get_json(
+            &format!("/v1/problems/{problem_id}/code"),
+            "ジャッジコードの取得",
+        )
     }
 
     pub fn save_judge_code(
@@ -243,20 +234,11 @@ impl YukicoderClient {
 
     // ---- validator ------------------------------------------------------
 
-    /// validator を取得する。
-    ///
-    /// ジャッジコードと同じく、この API を持たないサーバでは 404 が返るので
-    /// `None` を返してほかの同期を止めない。
-    pub fn get_validator(&self, problem_id: i64) -> Result<Option<ValidatorContent>> {
-        let path = format!("/v1/problems/{problem_id}/validator");
-        let res = self
-            .authed(self.http.get(self.url(&path)))
-            .send()
-            .context("validator の取得リクエストを送信できませんでした")?;
-        if res.status() == StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        Self::parse_json(res, "validator の取得").map(Some)
+    pub fn get_validator(&self, problem_id: i64) -> Result<ValidatorContent> {
+        self.get_json(
+            &format!("/v1/problems/{problem_id}/validator"),
+            "validator の取得",
+        )
     }
 
     /// validator を保存する。レスポンスはジャッジコードの保存と同じ形。
@@ -296,14 +278,35 @@ impl YukicoderClient {
             &format!("/v1/problems/{problem_id}/file/{which}"),
             "テストケース一覧の取得",
         )?;
-        // 名前はローカルパスに join し、URL のパスにも埋め込む。サーバ由来でも
-        // 検証してから使う ('/' や '..' が混ざると外に書いてしまう)。
-        for name in &names {
-            if name.is_empty() || crate::local::sanitized_file_name(name) != *name {
+        Self::check_testcase_names(names.iter().map(String::as_str))?;
+        Ok(names)
+    }
+
+    /// テストケース一覧を、保存内容の sha256 付きで取得する (`?detail=1`)。
+    pub fn list_testcases_detail(
+        &self,
+        problem_id: i64,
+        which: Which,
+    ) -> Result<Vec<models::TestcaseInfo>> {
+        let details: Vec<models::TestcaseInfo> = self.get_json(
+            &format!("/v1/problems/{problem_id}/file/{which}?detail=1"),
+            "テストケース一覧の取得",
+        )?;
+        Self::check_testcase_names(details.iter().map(|d| d.name.as_str()))?;
+        Ok(details)
+    }
+
+    /// サーバ由来のテストケース名を検証する。
+    ///
+    /// 名前はローカルパスに join し、URL のパスにも埋め込む。サーバ由来でも
+    /// 検証してから使う ('/' や '..' が混ざると外に書いてしまう)。
+    fn check_testcase_names<'a>(names: impl Iterator<Item = &'a str>) -> Result<()> {
+        for name in names {
+            if name.is_empty() || crate::local::sanitized_file_name(name) != name {
                 bail!("サーバが想定外のテストケース名を返しました: {name:?}");
             }
         }
-        Ok(names)
+        Ok(())
     }
 
     /// テストケース 1 件の中身を、保存されているバイト列のまま取得する。
@@ -398,19 +401,13 @@ impl YukicoderClient {
     // ---- その他 ---------------------------------------------------------
 
     /// ジャッジステータスの一覧。認証不要。
-    ///
-    /// この API を持たないサーバでは 404 が返るので `None` を返し、呼び出し側は
-    /// 組み込みの一覧にフォールバックする。
-    pub fn statuses(&self) -> Result<Option<Vec<models::StatusInfo>>> {
+    pub fn statuses(&self) -> Result<Vec<models::StatusInfo>> {
         let res = self
             .http
             .get(self.url("/v1/statuses"))
             .send()
             .context("ステータス一覧のリクエストを送信できませんでした")?;
-        if res.status() == StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        Self::parse_json(res, "ステータス一覧の取得").map(Some)
+        Self::parse_json(res, "ステータス一覧の取得")
     }
 
     /// 言語一覧。認証不要。

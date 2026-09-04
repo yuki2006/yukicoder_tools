@@ -5,7 +5,9 @@ use anyhow::{Context as _, Result};
 use crate::api::models::{Statement, Which};
 use crate::api::YukicoderClient;
 use crate::commands::Context;
-use crate::local::{display_path, GeneratorConfig, JudgeConfig, ProblemDir, ValidatorConfig};
+use crate::local::{
+    display_path, sha256_hex, GeneratorConfig, JudgeConfig, ProblemDir, ValidatorConfig,
+};
 use crate::Target;
 
 pub fn run(target: &Target, testcases: bool) -> Result<()> {
@@ -77,59 +79,53 @@ pub fn pull_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> 
         );
     }
 
-    // ジャッジコード (スペシャルジャッジ)。この API を持たないサーバでは None が
-    // 返るので、その場合はほかの同期を止めずに知らせるだけにする。
-    match client.get_judge_code(problem_id)? {
-        None => println!("  ジャッジコード: このサーバはジャッジコードの API に対応していません"),
-        Some(code) if code.source.trim().is_empty() => println!("  ジャッジコード: 未登録"),
-        Some(code) => {
-            let source_file = dir
-                .existing_judge_config()?
-                .map(|config| config.source_file)
-                .unwrap_or_else(|| source_file_name("judge", &code.lang_id));
-            let config = JudgeConfig {
-                lang_id: code.lang_id.clone(),
-                source_file: source_file.clone(),
-            };
-            dir.write_judge_code(&config, &code.source)?;
-            println!(
-                "  ジャッジコード -> {} (コンパイル状態: {})",
-                display_path(dir.judge_dir().join(&source_file)),
-                if code.status.is_empty() {
-                    "不明"
-                } else {
-                    &code.status
-                }
-            );
-        }
+    // ジャッジコード (スペシャルジャッジ)。
+    let code = client.get_judge_code(problem_id)?;
+    if code.source.trim().is_empty() {
+        println!("  ジャッジコード: 未登録");
+    } else {
+        let source_file = dir
+            .existing_judge_config()?
+            .map(|config| config.source_file)
+            .unwrap_or_else(|| source_file_name("judge", &code.lang_id));
+        let config = JudgeConfig {
+            lang_id: code.lang_id.clone(),
+            source_file: source_file.clone(),
+        };
+        dir.write_judge_code(&config, &code.source)?;
+        println!(
+            "  ジャッジコード -> {} (コンパイル状態: {})",
+            display_path(dir.judge_dir().join(&source_file)),
+            if code.status.is_empty() {
+                "不明"
+            } else {
+                &code.status
+            }
+        );
     }
 
-    // validator。ジャッジコードと同じく、この API を持たないサーバでは None。
-    match client.get_validator(problem_id)? {
-        None => println!("  validator: このサーバは validator の API に対応していません"),
-        Some(validator) if validator.source.trim().is_empty() => {
-            println!("  validator: 未登録")
-        }
-        Some(validator) => {
-            let source_file = dir
-                .existing_validator_config()?
-                .map(|config| config.source_file)
-                .unwrap_or_else(|| source_file_name("validator", &validator.lang_id));
-            let config = ValidatorConfig {
-                lang_id: validator.lang_id.clone(),
-                source_file: source_file.clone(),
-            };
-            dir.write_validator(&config, &validator.source)?;
-            println!(
-                "  validator -> {} (検証状態: {})",
-                display_path(dir.validator_dir().join(&source_file)),
-                if validator.status.is_empty() {
-                    "不明"
-                } else {
-                    &validator.status
-                }
-            );
-        }
+    let validator = client.get_validator(problem_id)?;
+    if validator.source.trim().is_empty() {
+        println!("  validator: 未登録");
+    } else {
+        let source_file = dir
+            .existing_validator_config()?
+            .map(|config| config.source_file)
+            .unwrap_or_else(|| source_file_name("validator", &validator.lang_id));
+        let config = ValidatorConfig {
+            lang_id: validator.lang_id.clone(),
+            source_file: source_file.clone(),
+        };
+        dir.write_validator(&config, &validator.source)?;
+        println!(
+            "  validator -> {} (検証状態: {})",
+            display_path(dir.validator_dir().join(&source_file)),
+            if validator.status.is_empty() {
+                "不明"
+            } else {
+                &validator.status
+            }
+        );
     }
 
     // 解説は未作成でもテンプレートが返る。すでにローカルにある場合だけ更新し、
@@ -151,14 +147,30 @@ pub fn pull_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> 
 
     if testcases {
         for which in [Which::In, Which::Out] {
-            let names = client.list_testcases(problem_id, which)?;
-            for name in &names {
+            let details = client.list_testcases_detail(problem_id, which)?;
+            // ローカルが読めない (不正なファイル名など) 場合は、手元に無いもの
+            // として全件取得に倒す。取得結果で上書きされるだけなので安全。
+            let local = dir.read_testcases(which).unwrap_or_default();
+            let mut downloaded = 0usize;
+            for detail in &details {
+                // 一覧の sha256 が手元と同じファイルはダウンロードしない。
+                let same = local
+                    .get(&detail.name)
+                    .is_some_and(|content| sha256_hex(content) == detail.sha256);
+                if same {
+                    continue;
+                }
+                let name = &detail.name;
                 let content = client
                     .get_testcase(problem_id, which, name)
                     .with_context(|| format!("テストケース {which}/{name} の取得"))?;
                 dir.write_testcase(which, name, &content)?;
+                downloaded += 1;
             }
-            println!("  テストケース {which}: {} 件", names.len());
+            println!(
+                "  テストケース {which}: {} 件 (取得 {downloaded} 件)",
+                details.len()
+            );
         }
     }
 

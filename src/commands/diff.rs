@@ -94,33 +94,25 @@ fn diff_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> Resu
 
     if dir.has_judge_code() {
         let (config, source) = dir.read_judge_code()?;
-        match client.get_judge_code(problem_id)? {
-            None => println!("ジャッジコード: このサーバはジャッジコードの API に対応していません"),
-            Some(remote) => {
-                if remote.lang_id != config.lang_id {
-                    differs = true;
-                    println!(
-                        "ジャッジコード langId: {} -> {}",
-                        remote.lang_id, config.lang_id
-                    );
-                }
-                differs |= print_text_diff("ジャッジコード", &remote.source, &source);
-            }
+        let remote = client.get_judge_code(problem_id)?;
+        if remote.lang_id != config.lang_id {
+            differs = true;
+            println!(
+                "ジャッジコード langId: {} -> {}",
+                remote.lang_id, config.lang_id
+            );
         }
+        differs |= print_text_diff("ジャッジコード", &remote.source, &source);
     }
 
     if dir.has_validator() {
         let (config, source) = dir.read_validator()?;
-        match client.get_validator(problem_id)? {
-            None => println!("validator: このサーバは validator の API に対応していません"),
-            Some(remote) => {
-                if remote.lang_id != config.lang_id {
-                    differs = true;
-                    println!("validator langId: {} -> {}", remote.lang_id, config.lang_id);
-                }
-                differs |= print_text_diff("validator", &remote.source, &source);
-            }
+        let remote = client.get_validator(problem_id)?;
+        if remote.lang_id != config.lang_id {
+            differs = true;
+            println!("validator langId: {} -> {}", remote.lang_id, config.lang_id);
         }
+        differs |= print_text_diff("validator", &remote.source, &source);
     }
 
     if testcases {
@@ -135,25 +127,28 @@ fn diff_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> Resu
 fn diff_testcases(client: &YukicoderClient, dir: &ProblemDir, which: Which) -> Result<bool> {
     let problem_id = dir.problem_id();
     let local = dir.read_testcases(which)?;
-    let remote_names = client.list_testcases(problem_id, which)?;
+    let details = client.list_testcases_detail(problem_id, which)?;
     let mut differs = false;
 
-    for name in &remote_names {
-        if !local.contains_key(name) {
+    for detail in &details {
+        if !local.contains_key(&detail.name) {
             differs = true;
-            println!("テストケース {which}/{name}: yukicoder にのみ存在");
+            println!("テストケース {which}/{}: yukicoder にのみ存在", detail.name);
         }
     }
+    // 一覧の sha256 は保存されているバイト列に対する値なので、ダウンロード
+    // せずに比較できる。
     for (name, content) in &local {
-        if !remote_names.iter().any(|n| n == name) {
-            differs = true;
-            println!("テストケース {which}/{name}: ローカルにのみ存在");
-            continue;
-        }
-        let remote = client.get_testcase(problem_id, which, name)?;
-        if &remote != content {
-            differs = true;
-            println!("テストケース {which}/{name}: 内容が違います");
+        match details.iter().find(|d| &d.name == name) {
+            None => {
+                differs = true;
+                println!("テストケース {which}/{name}: ローカルにのみ存在");
+            }
+            Some(detail) if detail.sha256 != crate::local::sha256_hex(content) => {
+                differs = true;
+                println!("テストケース {which}/{name}: 内容が違います");
+            }
+            Some(_) => {}
         }
     }
     if !differs {
