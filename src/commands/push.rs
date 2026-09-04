@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context as _, Result};
 
 use crate::api::models::{
-    judge_status_is_final, EditorialRequest, GeneratorRequest, JudgeCodeRequest,
+    judge_status_is_final, judging_ids, EditorialRequest, GeneratorRequest, JudgeCodeRequest,
     ProblemEditRequest, SaveResponse, ValidatorRequest, Which, JUDGE_STATUS_OK,
 };
 use crate::api::YukicoderClient;
@@ -260,9 +260,14 @@ fn push_validator(
         return Ok(());
     }
 
+    // 非終端 (実行中・実行待ち) の判定は /v1/statuses の judging 分類を正と
+    // する。この API を持たないサーバでは、組み込みの一覧にフォールバック。
+    let judging = client.statuses()?.map(|list| judging_ids(&list));
+    let judging = judging.as_ref();
+
     if unchanged {
         if !testcases_changed {
-            if remote.is_up_to_date() {
+            if remote.is_up_to_date(judging) {
                 if remote.status == JUDGE_STATUS_OK {
                     println!("  validator: 差分なし (検証状態: {})", remote.status);
                     return Ok(());
@@ -302,7 +307,7 @@ fn push_validator(
         return Ok(());
     }
 
-    match wait_for_validation(client, problem_id)? {
+    match wait_for_validation(client, problem_id, judging)? {
         Some(validator) if validator.status == JUDGE_STATUS_OK => {
             println!("  validator: 検証成功 ({})", validator.status);
             Ok(())
@@ -341,12 +346,13 @@ fn fail_validation(problem_id: i64, status: &str) -> Result<()> {
 fn wait_for_validation(
     client: &YukicoderClient,
     problem_id: i64,
+    judging: Option<&std::collections::HashSet<String>>,
 ) -> Result<Option<crate::api::models::ValidatorContent>> {
     let deadline = Instant::now() + VALIDATION_TIMEOUT;
     loop {
         std::thread::sleep(VALIDATION_POLL_INTERVAL);
         if let Some(validator) = client.get_validator(problem_id)? {
-            if validator.is_up_to_date() {
+            if validator.is_up_to_date(judging) {
                 return Ok(Some(validator));
             }
         }

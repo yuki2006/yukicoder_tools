@@ -3,6 +3,8 @@
 //! フィールド名は API と同じ camelCase を使う。`problem.toml` などのローカル
 //! ファイルも同じ名前で保存し、API のドキュメントをそのまま参照できるようにする。
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 /// `GET /v1/problems/{id}/edit` のレスポンス。
@@ -308,8 +310,15 @@ impl ValidatorContent {
     /// 比較は `>=` ではなく `>`。サーバのタイムスタンプは秒精度なので、同一
     /// 秒内に「テストケース更新 → 前回の検証完了の記録」が入ると `=` になり
     /// 得る。その場合も再検証は必ず後から走って `latest_check` を進める。
-    pub fn is_up_to_date(&self) -> bool {
-        validator_status_is_final(&self.status) && self.latest_check > self.test_case_latest
+    ///
+    /// `judging` は `/v1/statuses` から作った非終端 ID の集合 ([`judging_ids`])。
+    /// `None` なら組み込みの一覧 ([`validator_status_is_final`]) を使う。
+    pub fn is_up_to_date(&self, judging: Option<&HashSet<String>>) -> bool {
+        let finished = match judging {
+            Some(judging) => !self.status.is_empty() && !judging.contains(self.status.as_str()),
+            None => validator_status_is_final(&self.status),
+        };
+        finished && self.latest_check > self.test_case_latest
     }
 }
 
@@ -322,18 +331,52 @@ pub struct ValidatorRequest {
     pub source: String,
 }
 
-/// validator の検証状態が確定しているか。
+/// validator の検証状態が確定しているか (組み込みの一覧による判定)。
 ///
 /// 非終端は `Pending` (テストケース変更後のデバウンス待ち)、`WJ` (待機)、
 /// `WJ_PURE` (純コード判定待ち)、`Judge` (実行中) の 4 つで、空文字列は未登録。
 /// 終端は列挙しない (AC/WA/RE/TLE/MLE/OLE/CE/IE と幅があり、未知の値を
 /// 待ち続けるとタイムアウトまで止まるため、非終端側を列挙する)。
+///
+/// 非終端の語彙は増えることがある (実際に `Pending` が増えた)。`/v1/statuses`
+/// を持つサーバでは、この関数ではなくそこから作った [`judging_ids`] を正と
+/// して使う。これは API を持たないサーバ向けのフォールバック。
 pub fn validator_status_is_final(status: &str) -> bool {
     !status.is_empty()
         && status != "Pending"
         && status != "WJ"
         && status != "WJ_PURE"
         && status != "Judge"
+}
+
+/// `GET /v1/statuses` の要素。ジャッジステータスの一覧 (認証不要)。
+///
+/// レスポンスには `description` (日本語の説明) もあるが、本ツールでは使わない
+/// ので読まない。
+#[derive(Debug, Clone, Deserialize)]
+pub struct StatusInfo {
+    pub id: String,
+    /// `success` / `wrong` / `judging` / `danger`。
+    ///
+    /// `judging` は実行中・実行待ちで、この間はポーリングを続ける。judging
+    /// 以外になっても「結果が確定した」わけではない (リジャッジや、IE などが
+    /// サーバ再起動で投げ直されることで、後から変わることがある)。
+    pub category: String,
+}
+
+/// 「実行中・実行待ち」の分類名。
+pub const STATUS_CATEGORY_JUDGING: &str = "judging";
+
+/// ステータス一覧から、非終端 (judging) の ID 集合を作る。
+///
+/// ステータス ID は増えることがあるので列挙をクライアントに持たせず、
+/// サーバの分類を正とする。
+pub fn judging_ids(statuses: &[StatusInfo]) -> HashSet<String> {
+    statuses
+        .iter()
+        .filter(|s| s.category == STATUS_CATEGORY_JUDGING)
+        .map(|s| s.id.clone())
+        .collect()
 }
 
 /// `GET /v1/problems/{id}/editorial` のレスポンス。
@@ -531,21 +574,56 @@ mod tests {
             test_case_latest,
             ..Default::default()
         };
-        assert!(validator("AC", 200, 100).is_up_to_date());
+        assert!(validator("AC", 200, 100).is_up_to_date(None));
         assert!(
-            !validator("AC", 100, 200).is_up_to_date(),
+            !validator("AC", 100, 200).is_up_to_date(None),
             "テストケースの方が新しい間は、前回の AC で完了にしない"
         );
-        assert!(!validator("AC", 100, 100).is_up_to_date(), "同時刻は未完了");
-        assert!(!validator("WJ", 200, 100).is_up_to_date());
         assert!(
-            validator("WA", 200, 100).is_up_to_date(),
+            !validator("AC", 100, 100).is_up_to_date(None),
+            "同時刻は未完了"
+        );
+        assert!(!validator("WJ", 200, 100).is_up_to_date(None));
+        assert!(
+            validator("WA", 200, 100).is_up_to_date(None),
             "失敗の終端も「結果が出た」ではある"
         );
         assert!(
-            validator("AC", 100, 0).is_up_to_date(),
+            validator("AC", 100, 0).is_up_to_date(None),
             "テストケース未更新 (NULL=0) でも結果があれば完了"
         );
+    }
+
+    /// `/v1/statuses` があるサーバでは、非終端の判定はサーバの judging 分類を
+    /// 正とする。ステータス ID が増えても、組み込みの列挙を直さずに追従できる。
+    #[test]
+    fn server_judging_categories_override_the_builtin_list() {
+        let statuses = [
+            ("WJ", "judging"),
+            ("Pending", "judging"),
+            ("NewWait", "judging"), // まだ組み込みの列挙に無い新しい非終端
+            ("AC", "success"),
+            ("WA", "wrong"),
+        ]
+        .map(|(id, category)| StatusInfo {
+            id: id.into(),
+            category: category.into(),
+        });
+        let judging = judging_ids(&statuses);
+        let validator = |status: &str| ValidatorContent {
+            status: status.into(),
+            latest_check: 200,
+            test_case_latest: 100,
+            ..Default::default()
+        };
+
+        assert!(validator("AC").is_up_to_date(Some(&judging)));
+        assert!(!validator("NewWait").is_up_to_date(Some(&judging)));
+        assert!(
+            validator("NewWait").is_up_to_date(None),
+            "組み込みの列挙は新しい非終端を知らない (だからサーバの分類を正とする)"
+        );
+        assert!(!validator("").is_up_to_date(Some(&judging)), "未登録");
     }
 
     /// API は eps を文字列でも数値でも返す。

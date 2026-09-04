@@ -149,14 +149,36 @@ fn validator_is_parsed_with_timestamps() {
 
     assert_eq!(validator.lang_id, "cpp17");
     assert_eq!(validator.status, "AC");
-    assert!(validator.is_up_to_date());
+    assert!(validator.is_up_to_date(None));
     server.join().unwrap();
 
     let (base_url, server) = serve_once(200, r#"{"langId":"","source":"","status":""}"#);
     let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
     let empty = client.get_validator(13954).unwrap().unwrap();
     assert_eq!(empty.latest_check, 0, "欠けたフィールドは 0");
-    assert!(!empty.is_up_to_date());
+    assert!(!empty.is_up_to_date(None));
+    server.join().unwrap();
+}
+
+/// `/v1/statuses` を持たないサーバでは 404 を「未対応」として扱い、
+/// 組み込みの一覧へのフォールバックに進めるようにする。
+#[test]
+fn statuses_are_parsed_and_404_means_unsupported() {
+    let (base_url, server) = serve_once(
+        200,
+        r#"[{"id":"WJ","category":"judging","description":"待ち"},
+           {"id":"AC","category":"success","description":"正解"}]"#,
+    );
+    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+    let statuses = client.statuses().unwrap().unwrap();
+    assert_eq!(statuses.len(), 2);
+    let judging = super::models::judging_ids(&statuses);
+    assert!(judging.contains("WJ") && !judging.contains("AC"));
+    server.join().unwrap();
+
+    let (base_url, server) = serve_once(404, "Not Found");
+    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+    assert!(client.statuses().unwrap().is_none());
     server.join().unwrap();
 }
 
