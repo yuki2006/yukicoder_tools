@@ -97,40 +97,16 @@ fn serve_once(status: u16, payload: &'static str) -> (String, JoinHandle<()>) {
     (format!("http://{addr}"), handle)
 }
 
-/// ジャッジコードの API を持たないサーバでは、404 を「未対応」として扱う。
-/// ここでエラーにすると pull 全体が止まってしまう。
 #[test]
-fn judge_code_is_none_when_the_api_is_missing() {
-    let (base_url, server) = serve_once(404, "Not Found");
-    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
-
-    assert!(client.get_judge_code(13954).unwrap().is_none());
-
-    server.join().unwrap();
-}
-
-#[test]
-fn judge_code_is_parsed_when_available() {
+fn judge_code_is_parsed() {
     let (base_url, server) = serve_once(200, r#"{"langId":"cpp17","source":"x","status":"AC"}"#);
     let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
 
-    let code = client.get_judge_code(13954).unwrap().unwrap();
+    let code = client.get_judge_code(13954).unwrap();
 
     assert_eq!(code.lang_id, "cpp17");
     assert_eq!(code.source, "x");
     assert_eq!(code.status, "AC");
-    server.join().unwrap();
-}
-
-/// validator の API を持たないサーバでも、404 を「未対応」として扱い
-/// pull を止めない (ジャッジコードと同じ契約)。
-#[test]
-fn validator_is_none_when_the_api_is_missing() {
-    let (base_url, server) = serve_once(404, "Not Found");
-    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
-
-    assert!(client.get_validator(13954).unwrap().is_none());
-
     server.join().unwrap();
 }
 
@@ -145,7 +121,7 @@ fn validator_is_parsed() {
     );
     let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
 
-    let validator = client.get_validator(13954).unwrap().unwrap();
+    let validator = client.get_validator(13954).unwrap();
 
     assert_eq!(validator.lang_id, "cpp17");
     assert_eq!(validator.status, "AC");
@@ -155,64 +131,46 @@ fn validator_is_parsed() {
 
     let (base_url, server) = serve_once(200, r#"{"langId":"","source":"","status":""}"#);
     let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
-    let empty = client.get_validator(13954).unwrap().unwrap();
+    let empty = client.get_validator(13954).unwrap();
     assert!(!empty.is_up_to_date(&judging), "未登録は未完了");
     server.join().unwrap();
 }
 
-/// `/v1/statuses` を持たないサーバでは 404 を「未対応」として扱い、
-/// 呼び出し側は「検証結果を待たない」に進めるようにする。
 #[test]
-fn statuses_are_parsed_and_404_means_unsupported() {
+fn statuses_are_parsed() {
     let (base_url, server) = serve_once(
         200,
         r#"[{"id":"WJ","category":"judging","description":"待ち"},
            {"id":"AC","category":"success","description":"正解"}]"#,
     );
     let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
-    let statuses = client.statuses().unwrap().unwrap();
+    let statuses = client.statuses().unwrap();
     assert_eq!(statuses.len(), 2);
     let judging = super::models::judging_ids(&statuses);
     assert!(judging.contains("WJ") && !judging.contains("AC"));
     server.join().unwrap();
-
-    let (base_url, server) = serve_once(404, "Not Found");
-    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
-    assert!(client.statuses().unwrap().is_none());
-    server.join().unwrap();
 }
 
-/// テストケース一覧 (`?detail=1`) は、ハッシュ付き (対応サーバ) と名前だけ
-/// (未対応サーバ) のどちらの形でも受け取れる。名前の検証はどちらにも掛かる。
+/// テストケース一覧は `?detail=1` のハッシュ付きの形で読み、名前も検証する。
 #[test]
-fn testcase_listing_accepts_both_shapes() {
-    use super::models::{TestcaseListing, Which};
+fn testcase_listing_is_parsed_with_hashes() {
+    use super::models::Which;
 
     let (base_url, server) = serve_once(
         200,
         r#"[{"name":"1.txt","size":4,"sha256":"9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a"}]"#,
     );
     let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
-    let TestcaseListing::Details(details) = client.list_testcases_detail(13954, Which::In).unwrap()
-    else {
-        panic!("detail 対応サーバの応答はハッシュ付きとして読む");
-    };
+    let details = client.list_testcases_detail(13954, Which::In).unwrap();
     assert_eq!(details[0].name, "1.txt");
     assert!(details[0].sha256.starts_with("9f64a747"));
-    server.join().unwrap();
-
-    let (base_url, server) = serve_once(200, r#"["1.txt","2.txt"]"#);
-    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
-    let listing = client.list_testcases_detail(13954, Which::In).unwrap();
-    assert!(matches!(listing, TestcaseListing::Names(_)));
-    assert_eq!(listing.names(), ["1.txt", "2.txt"]);
     server.join().unwrap();
 
     let (base_url, server) = serve_once(200, r#"[{"name":"../evil","size":1,"sha256":"ab"}]"#);
     let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
     assert!(
         client.list_testcases_detail(13954, Which::In).is_err(),
-        "ハッシュ付きの形でも名前は検証する"
+        "サーバ由来の名前も検証する"
     );
     server.join().unwrap();
 }

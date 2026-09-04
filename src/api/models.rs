@@ -420,24 +420,6 @@ pub struct TestcaseInfo {
     pub sha256: String,
 }
 
-/// テストケース一覧。
-///
-/// `?detail=1` に対応したサーバではハッシュ付き、古いサーバでは名前だけが返る。
-#[derive(Debug, Clone)]
-pub enum TestcaseListing {
-    Names(Vec<String>),
-    Details(Vec<TestcaseInfo>),
-}
-
-impl TestcaseListing {
-    pub fn names(&self) -> Vec<&str> {
-        match self {
-            TestcaseListing::Names(names) => names.iter().map(String::as_str).collect(),
-            TestcaseListing::Details(details) => details.iter().map(|d| d.name.as_str()).collect(),
-        }
-    }
-}
-
 /// テストケースの入出力どちらを指すか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Which {

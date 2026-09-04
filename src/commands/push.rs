@@ -9,7 +9,7 @@ use anyhow::{bail, Context as _, Result};
 
 use crate::api::models::{
     judge_status_is_final, judging_ids, EditorialRequest, GeneratorRequest, JudgeCodeRequest,
-    ProblemEditRequest, SaveResponse, TestcaseListing, ValidatorRequest, Which, JUDGE_STATUS_OK,
+    ProblemEditRequest, SaveResponse, ValidatorRequest, Which, JUDGE_STATUS_OK,
 };
 use crate::api::YukicoderClient;
 use crate::commands::Context;
@@ -230,11 +230,7 @@ fn push_validator(
 ) -> Result<()> {
     let problem_id = dir.problem_id();
     let (config, source) = dir.read_validator()?;
-
-    let Some(remote) = client.get_validator(problem_id)? else {
-        println!("  validator: このサーバは validator の API に対応していません");
-        return Ok(());
-    };
+    let remote = client.get_validator(problem_id)?;
 
     // ソースが空だと削除。両方空なら何もすることがない。
     let deleting = source.trim().is_empty();
@@ -260,16 +256,12 @@ fn push_validator(
     }
 
     // 非終端 (実行中・実行待ち) の判定は /v1/statuses の judging 分類を正と
-    // する (語彙の列挙はクライアントに持たない)。この API を持たない古い
-    // サーバでは判定できないので、保存だけして結果は待たない。
-    let judging = client.statuses()?.map(|list| judging_ids(&list));
+    // する (語彙の列挙はクライアントに持たない)。
+    let judging = judging_ids(&client.statuses()?);
+    let judging = &judging;
 
     if unchanged {
         if !testcases_changed {
-            let Some(judging) = &judging else {
-                println!("  validator: 差分なし (検証状態: {})", remote.status);
-                return Ok(());
-            };
             if remote.is_up_to_date(judging) {
                 if remote.status == JUDGE_STATUS_OK {
                     println!("  validator: 差分なし (検証状態: {})", remote.status);
@@ -309,13 +301,6 @@ fn push_validator(
         println!("  validator: 検証結果は待ちません (--no-wait-compile)");
         return Ok(());
     }
-    let Some(judging) = &judging else {
-        println!(
-            "  validator: このサーバは /v1/statuses に対応していないため、\
-             検証結果は待ちません。yukicoder 側で確認してください。"
-        );
-        return Ok(());
-    };
 
     match wait_for_validation(client, problem_id, judging)? {
         Some(validator) if validator.status == JUDGE_STATUS_OK => {
@@ -362,10 +347,9 @@ fn wait_for_validation(
     let deadline = Instant::now() + VALIDATION_TIMEOUT;
     loop {
         std::thread::sleep(VALIDATION_POLL_INTERVAL);
-        if let Some(validator) = client.get_validator(problem_id)? {
-            if validator.is_up_to_date(judging) {
-                return Ok(Some(validator));
-            }
+        let validator = client.get_validator(problem_id)?;
+        if validator.is_up_to_date(judging) {
+            return Ok(Some(validator));
         }
         if Instant::now() >= deadline {
             return Ok(None);
@@ -380,10 +364,9 @@ fn wait_for_compile(client: &YukicoderClient, problem_id: i64) -> Result<Option<
     let deadline = Instant::now() + COMPILE_TIMEOUT;
     loop {
         std::thread::sleep(COMPILE_POLL_INTERVAL);
-        if let Some(code) = client.get_judge_code(problem_id)? {
-            if judge_status_is_final(&code.status) {
-                return Ok(Some(code.status));
-            }
+        let code = client.get_judge_code(problem_id)?;
+        if judge_status_is_final(&code.status) {
+            return Ok(Some(code.status));
         }
         if Instant::now() >= deadline {
             return Ok(None);
@@ -401,26 +384,17 @@ fn push_testcases(
 ) -> Result<bool> {
     let problem_id = dir.problem_id();
     let local = dir.read_testcases(which)?;
-    let listing = client.list_testcases_detail(problem_id, which)?;
-    let remote_names: Vec<String> = listing.names().into_iter().map(str::to_string).collect();
+    let details = client.list_testcases_detail(problem_id, which)?;
+    let remote_names: Vec<&str> = details.iter().map(|d| d.name.as_str()).collect();
 
+    // 一覧の sha256 は保存されているバイト列に対する値なので、ダウンロード
+    // せずに比較できる。
     let mut changed_files: Vec<(String, Vec<u8>)> = Vec::new();
     for (name, content) in &local {
-        // 一覧の sha256 は保存されているバイト列に対する値なので、ダウンロード
-        // せずに比較できる。detail 未対応のサーバでは 1 件ずつ取得して比べる。
-        let changed = match &listing {
-            TestcaseListing::Details(details) => details
-                .iter()
-                .find(|d| &d.name == name)
-                .is_none_or(|d| d.sha256 != sha256_hex(content)),
-            TestcaseListing::Names(names) if names.contains(name) => {
-                let remote = client
-                    .get_testcase(problem_id, which, name)
-                    .with_context(|| format!("テストケース {which}/{name} の取得"))?;
-                &remote != content
-            }
-            TestcaseListing::Names(_) => true,
-        };
+        let changed = details
+            .iter()
+            .find(|d| &d.name == name)
+            .is_none_or(|d| d.sha256 != sha256_hex(content));
         if changed {
             changed_files.push((name.clone(), content.clone()));
         }
@@ -462,7 +436,7 @@ fn push_testcases(
     }
 
     let mut pruned = 0usize;
-    for name in &remote_names {
+    for name in remote_names {
         if local.contains_key(name) {
             continue;
         }
@@ -493,8 +467,7 @@ fn push_testcases(
 ///
 /// 書き換えは保存と同期で行われるので、アップロード直後の一覧 (`?detail=1`)
 /// に確定したハッシュが載る。送った内容とハッシュが違うファイルだけを取得
-/// して書き戻す。detail 未対応の古いサーバは書き換えも非同期なので、少し
-/// 待ってから全件を取得して比べる。
+/// して書き戻す。
 fn take_back_normalized(
     client: &YukicoderClient,
     dir: &ProblemDir,
@@ -504,22 +477,13 @@ fn take_back_normalized(
     if uploaded.is_empty() {
         return Ok(());
     }
-    let adjusted: Vec<&(String, Vec<u8>)> =
-        match client.list_testcases_detail(dir.problem_id(), which)? {
-            TestcaseListing::Details(details) => uploaded
-                .iter()
-                .filter(|(name, sent)| {
-                    details
-                        .iter()
-                        .find(|d| &d.name == name)
-                        .is_none_or(|d| d.sha256 != sha256_hex(sent))
-                })
-                .collect(),
-            TestcaseListing::Names(_) => {
-                std::thread::sleep(NORMALIZE_WAIT);
-                uploaded.iter().collect()
-            }
-        };
+    let details = client.list_testcases_detail(dir.problem_id(), which)?;
+    let adjusted = uploaded.iter().filter(|(name, sent)| {
+        details
+            .iter()
+            .find(|d| &d.name == name)
+            .is_none_or(|d| d.sha256 != sha256_hex(sent))
+    });
     for (name, sent) in adjusted {
         let stored = client
             .get_testcase(dir.problem_id(), which, name)
@@ -536,9 +500,6 @@ fn take_back_normalized(
     }
     Ok(())
 }
-
-/// detail 未対応のサーバで、非同期の書き換えが終わるのを待つ時間。
-const NORMALIZE_WAIT: Duration = Duration::from_secs(2);
 
 /// validator の検証を待つ時間。
 ///
