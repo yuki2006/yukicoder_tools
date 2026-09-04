@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context as _, Result};
 
 use crate::api::models::{
-    judge_status_is_final, EditorialRequest, GeneratorRequest, JudgeCodeRequest,
+    judge_status_is_final, judging_ids, EditorialRequest, GeneratorRequest, JudgeCodeRequest,
     ProblemEditRequest, SaveResponse, ValidatorRequest, Which, JUDGE_STATUS_OK,
 };
 use crate::api::YukicoderClient;
@@ -94,8 +94,7 @@ fn push_one(client: &YukicoderClient, dir: &ProblemDir, options: Options) -> Res
     }
 
     // ---- 解説 ----
-    // 外部URL一覧 (urlTable) は送らない。PUT では既存分に追記されるだけで置換
-    // できず、毎回送ると同じ行が増えるため。登録は WebUI で行う。
+    // 外部URL一覧 (urlTable) は writer が操作するものではないので、同期の対象外。
     if dir.has_editorial() {
         let editorial = dir.read_editorial()?;
         let request = EditorialRequest::new(editorial)?;
@@ -260,9 +259,18 @@ fn push_validator(
         return Ok(());
     }
 
+    // 非終端 (実行中・実行待ち) の判定は /v1/statuses の judging 分類を正と
+    // する (語彙の列挙はクライアントに持たない)。この API を持たない古い
+    // サーバでは判定できないので、保存だけして結果は待たない。
+    let judging = client.statuses()?.map(|list| judging_ids(&list));
+
     if unchanged {
         if !testcases_changed {
-            if remote.is_up_to_date() {
+            let Some(judging) = &judging else {
+                println!("  validator: 差分なし (検証状態: {})", remote.status);
+                return Ok(());
+            };
+            if remote.is_up_to_date(judging) {
                 if remote.status == JUDGE_STATUS_OK {
                     println!("  validator: 差分なし (検証状態: {})", remote.status);
                     return Ok(());
@@ -301,8 +309,15 @@ fn push_validator(
         println!("  validator: 検証結果は待ちません (--no-wait-compile)");
         return Ok(());
     }
+    let Some(judging) = &judging else {
+        println!(
+            "  validator: このサーバは /v1/statuses に対応していないため、\
+             検証結果は待ちません。yukicoder 側で確認してください。"
+        );
+        return Ok(());
+    };
 
-    match wait_for_validation(client, problem_id)? {
+    match wait_for_validation(client, problem_id, judging)? {
         Some(validator) if validator.status == JUDGE_STATUS_OK => {
             println!("  validator: 検証成功 ({})", validator.status);
             Ok(())
@@ -336,17 +351,19 @@ fn fail_validation(problem_id: i64, status: &str) -> Result<()> {
 
 /// 「今のテストケースに対する検証結果」が出るまで待つ。時間切れなら `None`。
 ///
-/// 判定は [`crate::api::models::ValidatorContent::is_up_to_date`]。テストケース
-/// 更新直後は前回の終端値が返るため、status が終端かどうかだけでは足りない。
+/// 判定は [`crate::api::models::ValidatorContent::is_up_to_date`] (status が
+/// judging でないこと)。テストケース更新と同時に `Pending` が立つことは
+/// サーバ側が保証している。
 fn wait_for_validation(
     client: &YukicoderClient,
     problem_id: i64,
+    judging: &std::collections::HashSet<String>,
 ) -> Result<Option<crate::api::models::ValidatorContent>> {
     let deadline = Instant::now() + VALIDATION_TIMEOUT;
     loop {
         std::thread::sleep(VALIDATION_POLL_INTERVAL);
         if let Some(validator) = client.get_validator(problem_id)? {
-            if validator.is_up_to_date() {
+            if validator.is_up_to_date(judging) {
                 return Ok(Some(validator));
             }
         }

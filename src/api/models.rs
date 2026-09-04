@@ -3,6 +3,8 @@
 //! フィールド名は API と同じ camelCase を使う。`problem.toml` などのローカル
 //! ファイルも同じ名前で保存し、API のドキュメントをそのまま参照できるようにする。
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 /// `GET /v1/problems/{id}/edit` のレスポンス。
@@ -281,35 +283,26 @@ pub struct ValidatorContent {
     #[serde(default)]
     pub source: String,
     /// 検証状態。ジャッジコードと違い、通常ジャッジとして走るので提出と同じ
-    /// ステータス一式 (AC/WA/RE/TLE/MLE/OLE/CE/IE) が出る。
-    /// 非終端は `Pending` / `WJ` / `Judge` の 3 つ ([`validator_status_is_final`])。
+    /// ステータス一式が出る。語彙と分類は `GET /v1/statuses` が正で、
+    /// `category == "judging"` の間は実行中・実行待ち ([`judging_ids`])。
     #[serde(default)]
     pub status: String,
-    /// 最後に検証が終わった時刻 (unix ナノ秒)。未登録・未実行なら 0。
-    #[serde(default)]
-    pub latest_check: i64,
-    /// テストケースが最後に更新された時刻 (unix ナノ秒)。一度も更新して
-    /// いなければ 0。テストケースの更新と同時に (再検証より先に) 進む。
-    ///
-    /// テストケースを更新すると再検証が走る (API 経由は 10 秒のデバウンス付き)。
-    /// その間 `status` は前回の終端値のままなので、これと `latest_check` を
-    /// 比べないと「今のテストケースに対する結果か」が分からない。
-    #[serde(default)]
-    pub test_case_latest: i64,
 }
 
 impl ValidatorContent {
     /// 今のテストケースに対する検証結果が出ているか。
     ///
-    /// テストケース更新直後は、`status` が前回の終端値のまま返る (再検証は
-    /// デバウンス後に走る)。終端かどうかだけで見ると前回の結果で成功と誤判定
-    /// するので、検証時刻がテストケース更新時刻より後であることも見る。
+    /// status が judging (実行中・実行待ち) でなければ結果が出ている。サーバは
+    /// テストケースの更新と同時に `Pending` を立てるので、更新直後に前回の
+    /// 結果を読んでしまうことはない (再検証自体は 10 秒のデバウンス後に走る)。
     ///
-    /// 比較は `>=` ではなく `>`。サーバのタイムスタンプは秒精度なので、同一
-    /// 秒内に「テストケース更新 → 前回の検証完了の記録」が入ると `=` になり
-    /// 得る。その場合も再検証は必ず後から走って `latest_check` を進める。
-    pub fn is_up_to_date(&self) -> bool {
-        validator_status_is_final(&self.status) && self.latest_check > self.test_case_latest
+    /// レスポンスには検証時刻とテストケース更新時刻 (`latestCheck` /
+    /// `testCaseLatest`) もあるが、status だけで判定できるので読まない。
+    ///
+    /// `judging` は `/v1/statuses` から作った非終端 ID の集合 ([`judging_ids`])。
+    /// 空文字列は未登録。
+    pub fn is_up_to_date(&self, judging: &HashSet<String>) -> bool {
+        !self.status.is_empty() && !judging.contains(self.status.as_str())
     }
 }
 
@@ -322,14 +315,34 @@ pub struct ValidatorRequest {
     pub source: String,
 }
 
-/// validator の検証状態が確定しているか。
+/// `GET /v1/statuses` の要素。ジャッジステータスの一覧 (認証不要)。
 ///
-/// 非終端は `Pending` (テストケース変更後のデバウンス待ち)、`WJ` (待機)、
-/// `Judge` (実行中) の 3 つで、空文字列は未登録。
-/// 終端は列挙しない (AC/WA/RE/TLE/MLE/OLE/CE/IE と幅があり、未知の値を
-/// 待ち続けるとタイムアウトまで止まるため、非終端側を列挙する)。
-pub fn validator_status_is_final(status: &str) -> bool {
-    !status.is_empty() && status != "Pending" && status != "WJ" && status != "Judge"
+/// レスポンスには `description` (日本語の説明) もあるが、本ツールでは使わない
+/// ので読まない。
+#[derive(Debug, Clone, Deserialize)]
+pub struct StatusInfo {
+    pub id: String,
+    /// `success` / `wrong` / `judging` / `danger`。
+    ///
+    /// `judging` は実行中・実行待ちで、この間はポーリングを続ける。judging
+    /// 以外になっても「結果が確定した」わけではない (リジャッジや、IE などが
+    /// サーバ再起動で投げ直されることで、後から変わることがある)。
+    pub category: String,
+}
+
+/// 「実行中・実行待ち」の分類名。
+pub const STATUS_CATEGORY_JUDGING: &str = "judging";
+
+/// ステータス一覧から、非終端 (judging) の ID 集合を作る。
+///
+/// ステータス ID は増えることがあるので列挙をクライアントに持たせず、
+/// サーバの分類を正とする。
+pub fn judging_ids(statuses: &[StatusInfo]) -> HashSet<String> {
+    statuses
+        .iter()
+        .filter(|s| s.category == STATUS_CATEGORY_JUDGING)
+        .map(|s| s.id.clone())
+        .collect()
 }
 
 /// `GET /v1/problems/{id}/editorial` のレスポンス。
@@ -486,7 +499,7 @@ mod tests {
 
     /// ジャッジコードのコンパイル状態は `WJ` → `Judge` → `AC` と遷移する。
     /// 途中の `Judge` を確定扱いすると、コンパイルが通っているのに失敗として
-    /// 報告してしまう (実際にそうなった)。
+    /// 報告してしまう。
     #[test]
     fn only_ac_and_ce_are_final_judge_statuses() {
         assert!(judge_status_is_final("AC"));
@@ -499,49 +512,40 @@ mod tests {
         }
     }
 
-    /// validator は通常ジャッジとして走るので、終端は AC/CE に限らない。
-    /// 非終端 (WJ / Judge) と未登録 (空) 以外はすべて終端として扱う。
+    /// validator の完了判定。非終端かどうかは `/v1/statuses` の judging 分類を
+    /// 正とする。テストケース更新と同時に `Pending` が立つことはサーバ側が
+    /// 保証するので、判定は status だけで足りる。
     #[test]
-    fn validator_statuses_other_than_wj_and_judge_are_final() {
-        for terminal in ["AC", "WA", "RE", "TLE", "MLE", "OLE", "CE", "IE"] {
-            assert!(validator_status_is_final(terminal), "{terminal}");
-        }
-        // Pending はテストケース変更の直後に立つ (デバウンス待ち)。これを
-        // 終端扱いすると、再検証が始まる前に前回の結果へ進んでしまう。
-        for not_final in ["Pending", "WJ", "Judge", ""] {
-            assert!(
-                !validator_status_is_final(not_final),
-                "{not_final:?} を終端扱いしてはいけない"
-            );
-        }
-    }
-
-    /// テストケース更新直後は前回の終端値が返るので、終端かどうかだけで
-    /// 完了と判定してはいけない (実際にデバウンス中は前回の AC が返る)。
-    /// タイムスタンプは秒精度なので、同時刻 (`=`) も未完了として扱う。
-    #[test]
-    fn validator_result_must_be_newer_than_the_testcases() {
-        let validator = |status: &str, latest_check: i64, test_case_latest: i64| ValidatorContent {
+    fn validator_result_follows_the_judging_category() {
+        let statuses = [
+            ("WJ", "judging"),
+            ("Pending", "judging"),
+            ("NewWait", "judging"), // 実在しない値。CLI が知らない ID でも分類だけで扱える
+            ("AC", "success"),
+            ("WA", "wrong"),
+        ]
+        .map(|(id, category)| StatusInfo {
+            id: id.into(),
+            category: category.into(),
+        });
+        let judging = judging_ids(&statuses);
+        let validator = |status: &str| ValidatorContent {
             status: status.into(),
-            latest_check,
-            test_case_latest,
             ..Default::default()
         };
-        assert!(validator("AC", 200, 100).is_up_to_date());
+
+        assert!(validator("AC").is_up_to_date(&judging));
         assert!(
-            !validator("AC", 100, 200).is_up_to_date(),
-            "テストケースの方が新しい間は、前回の AC で完了にしない"
-        );
-        assert!(!validator("AC", 100, 100).is_up_to_date(), "同時刻は未完了");
-        assert!(!validator("WJ", 200, 100).is_up_to_date());
-        assert!(
-            validator("WA", 200, 100).is_up_to_date(),
+            validator("WA").is_up_to_date(&judging),
             "失敗の終端も「結果が出た」ではある"
         );
-        assert!(
-            validator("AC", 100, 0).is_up_to_date(),
-            "テストケース未更新 (NULL=0) でも結果があれば完了"
-        );
+        for in_progress in ["WJ", "Pending", "NewWait"] {
+            assert!(
+                !validator(in_progress).is_up_to_date(&judging),
+                "{in_progress} は実行中・実行待ち"
+            );
+        }
+        assert!(!validator("").is_up_to_date(&judging), "未登録");
     }
 
     /// API は eps を文字列でも数値でも返す。

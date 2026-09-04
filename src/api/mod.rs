@@ -397,6 +397,22 @@ impl YukicoderClient {
 
     // ---- その他 ---------------------------------------------------------
 
+    /// ジャッジステータスの一覧。認証不要。
+    ///
+    /// この API を持たないサーバでは 404 が返るので `None` を返し、呼び出し側は
+    /// 組み込みの一覧にフォールバックする。
+    pub fn statuses(&self) -> Result<Option<Vec<models::StatusInfo>>> {
+        let res = self
+            .http
+            .get(self.url("/v1/statuses"))
+            .send()
+            .context("ステータス一覧のリクエストを送信できませんでした")?;
+        if res.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        Self::parse_json(res, "ステータス一覧の取得").map(Some)
+    }
+
     /// 言語一覧。認証不要。
     pub fn languages(&self) -> Result<Vec<Language>> {
         let res = self
