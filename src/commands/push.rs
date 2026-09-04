@@ -9,7 +9,7 @@ use anyhow::{bail, Context as _, Result};
 
 use crate::api::models::{
     judge_status_is_final, EditorialRequest, GeneratorRequest, JudgeCodeRequest,
-    ProblemEditRequest, SaveResponse, Which, JUDGE_STATUS_OK,
+    ProblemEditRequest, SaveResponse, ValidatorRequest, Which, JUDGE_STATUS_OK,
 };
 use crate::api::YukicoderClient;
 use crate::commands::Context;
@@ -24,7 +24,7 @@ pub struct Options {
     pub prune: bool,
     /// ジェネレータ保存後にケース生成を起動する。
     pub generate: bool,
-    /// ジャッジコードのコンパイル結果を待つ。
+    /// ジャッジコードのコンパイル結果と validator の検証結果を待つ。
     pub wait_compile: bool,
 }
 
@@ -116,10 +116,18 @@ fn push_one(client: &YukicoderClient, dir: &ProblemDir, options: Options) -> Res
     }
 
     // ---- テストケース ----
+    let mut testcases_changed = false;
     if options.testcases {
         for which in [Which::In, Which::Out] {
-            push_testcases(client, dir, which, options)?;
+            testcases_changed |= push_testcases(client, dir, which, options)?;
         }
+    }
+
+    // ---- validator ----
+    // テストケースの後に処理する。テストケースを更新すると再検証が走るので、
+    // ここでまとめて「送ったテストケースに対する結果」を 1 回の待ちで確認する。
+    if dir.has_validator() {
+        push_validator(client, dir, testcases_changed, options)?;
     }
 
     Ok(())
@@ -207,6 +215,147 @@ fn push_judge_code(
     Ok(())
 }
 
+/// validator を反映し、テストケースの検証結果まで見届ける。
+///
+/// テストケースの後に呼ぶ。テストケースを更新するとサーバが自動で再検証する
+/// (API 経由は 10 秒のデバウンス付き) ので、「送ったテストケースに対する結果」
+/// をここで 1 回の待ちにまとめて確認する。
+///
+/// サーバ負荷を抑えるため、ソースと言語に差分が無ければ PUT しない。PUT する
+/// と検証がもう 1 回走るため、再検証と合わせて同じ検証が 2 回になってしまう。
+fn push_validator(
+    client: &YukicoderClient,
+    dir: &ProblemDir,
+    testcases_changed: bool,
+    options: Options,
+) -> Result<()> {
+    let problem_id = dir.problem_id();
+    let (config, source) = dir.read_validator()?;
+
+    let Some(remote) = client.get_validator(problem_id)? else {
+        println!("  validator: このサーバは validator の API に対応していません");
+        return Ok(());
+    };
+
+    // ソースが空だと削除。両方空なら何もすることがない。
+    let deleting = source.trim().is_empty();
+    if deleting && remote.source.trim().is_empty() {
+        println!("  validator: 未登録 (ローカルのソースも空)");
+        return Ok(());
+    }
+
+    let unchanged = !deleting && remote.lang_id == config.lang_id && remote.source == source;
+
+    if options.dry_run {
+        if unchanged {
+            println!("  validator: 差分なし (PUT しません)");
+        } else {
+            println!(
+                "  PUT /v1/problems/{problem_id}/validator ({}, source {} バイト{})",
+                config.lang_id,
+                source.len(),
+                if deleting { " → 削除" } else { "" }
+            );
+        }
+        return Ok(());
+    }
+
+    if unchanged {
+        if !testcases_changed {
+            if remote.is_up_to_date() {
+                if remote.status == JUDGE_STATUS_OK {
+                    println!("  validator: 差分なし (検証状態: {})", remote.status);
+                    return Ok(());
+                }
+                return fail_validation(problem_id, &remote.status);
+            }
+            println!("  validator: 差分はありませんが、検証が終わっていないので結果を待ちます");
+        }
+        // テストケースを変えた場合は、サーバの再検証 (デバウンス後に開始) を待つ。
+    } else {
+        let request = ValidatorRequest {
+            lang_id: config.lang_id,
+            source,
+        };
+        let res = client.save_validator(problem_id, &request)?;
+        let message = res.message.trim();
+        println!(
+            "  validator: {}",
+            if message.is_empty() {
+                if deleting {
+                    "削除しました"
+                } else {
+                    "保存しました"
+                }
+            } else {
+                message
+            }
+        );
+        // 削除では検証が走らず、DB の行ごと消えるので待たない。
+        if deleting {
+            return Ok(());
+        }
+    }
+
+    if !options.wait_compile {
+        println!("  validator: 検証結果は待ちません (--no-wait-compile)");
+        return Ok(());
+    }
+
+    match wait_for_validation(client, problem_id)? {
+        Some(validator) if validator.status == JUDGE_STATUS_OK => {
+            println!("  validator: 検証成功 ({})", validator.status);
+            Ok(())
+        }
+        Some(validator) => fail_validation(problem_id, &validator.status),
+        None => {
+            println!(
+                "  validator: {VALIDATION_TIMEOUT:?} 待っても検証が終わりませんでした。\
+                 サーバの再起動などで再検証が走っていない可能性があります。\
+                 時間をおいて `yuki-tool push` を実行し直してください。"
+            );
+            Ok(())
+        }
+    }
+}
+
+/// validator の検証失敗をエラーにする。壊れたテストケースや validator を
+/// 黙って残さないため、push 自体を失敗させる。
+fn fail_validation(problem_id: i64, status: &str) -> Result<()> {
+    let what = match status {
+        "WA" => "テストケースが validator を通りませんでした",
+        "CE" => "validator のコンパイルに失敗しました",
+        "RE" | "TLE" | "MLE" | "OLE" => "validator の実行に失敗しました",
+        _ => "validator の検証に失敗しました",
+    };
+    bail!(
+        "{what} ({status})。\
+         https://yukicoder.me/problems/{problem_id}/validation で内容を確認してください。"
+    )
+}
+
+/// 「今のテストケースに対する検証結果」が出るまで待つ。時間切れなら `None`。
+///
+/// 判定は [`crate::api::models::ValidatorContent::is_up_to_date`]。テストケース
+/// 更新直後は前回の終端値が返るため、status が終端かどうかだけでは足りない。
+fn wait_for_validation(
+    client: &YukicoderClient,
+    problem_id: i64,
+) -> Result<Option<crate::api::models::ValidatorContent>> {
+    let deadline = Instant::now() + VALIDATION_TIMEOUT;
+    loop {
+        std::thread::sleep(VALIDATION_POLL_INTERVAL);
+        if let Some(validator) = client.get_validator(problem_id)? {
+            if validator.is_up_to_date() {
+                return Ok(Some(validator));
+            }
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+    }
+}
+
 /// コンパイル状態が確定するまで待つ。時間切れなら `None`。
 ///
 /// `WJ` と `Judge` は途中の状態なので、確定するまで待ち続ける。
@@ -225,12 +374,14 @@ fn wait_for_compile(client: &YukicoderClient, problem_id: i64) -> Result<Option<
     }
 }
 
+/// テストケースを反映する。サーバ側を実際に変更したら true を返す
+/// (validator の再検証が走るかどうかの判断に使う)。
 fn push_testcases(
     client: &YukicoderClient,
     dir: &ProblemDir,
     which: Which,
     options: Options,
-) -> Result<()> {
+) -> Result<bool> {
     let problem_id = dir.problem_id();
     let local = dir.read_testcases(which)?;
     let remote_names = client.list_testcases(problem_id, which)?;
@@ -308,7 +459,7 @@ fn push_testcases(
     if uploaded == 0 && pruned == 0 {
         println!("  テストケース {which}: 差分なし ({} 件)", local.len());
     }
-    Ok(())
+    Ok(!options.dry_run && (uploaded > 0 || pruned > 0))
 }
 
 /// yukicoder は保存時にテストケースを書き換える (改行コード、行末の半角
@@ -346,6 +497,13 @@ fn take_back_normalized(
 
 /// サーバ側の書き換えが終わるのを待つ時間。
 const NORMALIZE_WAIT: Duration = Duration::from_secs(2);
+
+/// validator の検証を待つ時間。
+///
+/// テストケース更新の再検証は 10 秒のデバウンスの後に始まり、そこから全テスト
+/// ケースを実行するので、コンパイルより長めに取る。
+const VALIDATION_TIMEOUT: Duration = Duration::from_secs(600);
+const VALIDATION_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// アップロードは HTTP ヘッダ込みで 30MiB までなので、余裕を見て分割する。
 /// ジャッジコードのコンパイルを待つ時間。

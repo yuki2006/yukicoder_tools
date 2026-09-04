@@ -19,7 +19,7 @@ use serde::Serialize;
 use models::{
     EditorialContent, EditorialRequest, GeneratorContent, GeneratorRequest, JudgeCodeContent,
     JudgeCodeRequest, JudgeCodeSaveResponse, Language, ProblemEditContent, ProblemEditRequest,
-    SaveResponse, SolutionRequest, UploadResponse, Which,
+    SaveResponse, SolutionRequest, UploadResponse, ValidatorContent, ValidatorRequest, Which,
 };
 
 pub const DEFAULT_BASE_URL: &str = "https://yukicoder.me/api";
@@ -238,6 +238,37 @@ impl YukicoderClient {
             &format!("/v1/problems/{problem_id}/code"),
             req,
             "ジャッジコードの保存",
+        )
+    }
+
+    // ---- validator ------------------------------------------------------
+
+    /// validator を取得する。
+    ///
+    /// ジャッジコードと同じく、この API を持たないサーバでは 404 が返るので
+    /// `None` を返してほかの同期を止めない。
+    pub fn get_validator(&self, problem_id: i64) -> Result<Option<ValidatorContent>> {
+        let path = format!("/v1/problems/{problem_id}/validator");
+        let res = self
+            .authed(self.http.get(self.url(&path)))
+            .send()
+            .context("validator の取得リクエストを送信できませんでした")?;
+        if res.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        Self::parse_json(res, "validator の取得").map(Some)
+    }
+
+    /// validator を保存する。レスポンスはジャッジコードの保存と同じ形。
+    pub fn save_validator(
+        &self,
+        problem_id: i64,
+        req: &ValidatorRequest,
+    ) -> Result<JudgeCodeSaveResponse> {
+        self.put_json(
+            &format!("/v1/problems/{problem_id}/validator"),
+            req,
+            "validator の保存",
         )
     }
 

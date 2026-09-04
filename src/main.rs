@@ -21,7 +21,7 @@ pub const EXIT_DIFF: i32 = 2;
     version,
     about = "yukicoder の問題を Git リポジトリから管理する",
     long_about = "yukicoder の公開 API を使って、問題設定・問題文・テストケース・\
-ジェネレータ・解説をローカルのファイルと同期する。\n\
+ジェネレータ・ジャッジコード・validator・解説をローカルのファイルと同期する。\n\
 トークンは環境変数 (YUKICODER_TOKEN_<問題ID> / YUKICODER_TOKEN / YUKICODER_API_KEY) \
 か、リポジトリ直下の .env から読む。"
 )]
@@ -72,7 +72,7 @@ enum Command {
         /// ジェネレータの保存後にケース生成を起動する
         #[arg(long)]
         generate: bool,
-        /// ジャッジコードのコンパイル結果を待たない
+        /// ジャッジコードのコンパイル結果と validator の検証結果を待たない
         #[arg(long)]
         no_wait_compile: bool,
     },

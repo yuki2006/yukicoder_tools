@@ -8,6 +8,9 @@
 //!   judge/
 //!     judge.toml            スペシャルジャッジのジャッジコードの設定
 //!     <sourceFile>          ジャッジコードのソース
+//!   validator/
+//!     validator.toml        テストケースを検証する validator の設定
+//!     <sourceFile>          validator のソース
 //!   generator/
 //!     generator.toml        ジェネレータの設定
 //!     <sourceFile>          ジェネレータのソース
@@ -31,11 +34,22 @@ use crate::api::models::{
 pub const SETTINGS_FILE: &str = "problem.toml";
 pub const GENERATOR_CONFIG_FILE: &str = "generator.toml";
 pub const JUDGE_CONFIG_FILE: &str = "judge.toml";
+pub const VALIDATOR_CONFIG_FILE: &str = "validator.toml";
 
 /// `judge/judge.toml`。スペシャルジャッジのジャッジコードの設定。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JudgeConfig {
+    /// 言語 ID (`yuki-tool languages` で確認できる)。
+    pub lang_id: String,
+    /// ソースファイル名 (このディレクトリからの相対)。
+    pub source_file: String,
+}
+
+/// `validator/validator.toml`。テストケースを検証する validator の設定。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidatorConfig {
     /// 言語 ID (`yuki-tool languages` で確認できる)。
     pub lang_id: String,
     /// ソースファイル名 (このディレクトリからの相対)。
@@ -67,8 +81,17 @@ pub struct ProblemFile {
     /// 対応する問題 ID。古い形式のために省略も許す。
     #[serde(default)]
     pub problem_id: Option<i64>,
+    /// false にすると `--all` と暗黙の単一選択の対象から外れる (ID を明示した
+    /// 実行では動く)。トークンの失効中などに、CI の同期を問題ごとに止めるための
+    /// ローカル専用キーで、API には送らない。
+    #[serde(default = "default_sync")]
+    pub sync: bool,
     #[serde(flatten)]
     pub settings: ProblemSettings,
+}
+
+fn default_sync() -> bool {
+    true
 }
 
 /// `problem.toml` を読む。
@@ -132,12 +155,18 @@ impl ProblemDir {
                 .collect::<Vec<_>>()
                 .join(" "),
         );
+        // sync = false はローカル専用の設定なので、pull で書き直しても消さない。
+        let sync_line = if existing_sync(&self.settings_path())? {
+            ""
+        } else {
+            "sync = false # 同期を止めている (--all の対象外)。再開するなら行ごと消す。\n"
+        };
         let text = format!(
             "# yukicoder 問題設定。どの問題かは problemId で決まる (ディレクトリ名は自由)。\n\
              # 他のキーは PUT /api/v1/problems/{{id}}/edit と同じ名前で、変更したら\n\
              # `yuki-tool push` で反映する。\n\
              problemId = {}\n\
-             {body}",
+             {sync_line}{body}",
             self.problem_id
         );
         write_text(&self.settings_path(), &text)
@@ -288,6 +317,48 @@ impl ProblemDir {
         write_text(&self.judge_dir().join(&config.source_file), source)
     }
 
+    // ---- validator ------------------------------------------------------
+
+    pub fn validator_dir(&self) -> PathBuf {
+        self.root.join("validator")
+    }
+
+    pub fn validator_config_path(&self) -> PathBuf {
+        self.validator_dir().join(VALIDATOR_CONFIG_FILE)
+    }
+
+    pub fn has_validator(&self) -> bool {
+        self.validator_config_path().is_file()
+    }
+
+    /// 既存の `validator.toml` を読む。無ければ `None`、壊れていたらエラー。
+    pub fn existing_validator_config(&self) -> Result<Option<ValidatorConfig>> {
+        let path = self.validator_config_path();
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let text = read_text(&path)?;
+        toml::from_str(&text)
+            .map(Some)
+            .with_context(|| format!("{} を解釈できませんでした", display_path(&path)))
+    }
+
+    pub fn read_validator(&self) -> Result<(ValidatorConfig, String)> {
+        let path = self.validator_config_path();
+        let text = read_text(&path)?;
+        let config: ValidatorConfig = toml::from_str(&text)
+            .with_context(|| format!("{} を解釈できませんでした", display_path(&path)))?;
+        let source = read_text(&self.validator_dir().join(&config.source_file))?;
+        Ok((config, source))
+    }
+
+    pub fn write_validator(&self, config: &ValidatorConfig, source: &str) -> Result<()> {
+        let text =
+            toml::to_string_pretty(config).context("validator の設定を TOML にできませんでした")?;
+        write_text(&self.validator_config_path(), &text)?;
+        write_text(&self.validator_dir().join(&config.source_file), source)
+    }
+
     // ---- テストケース ---------------------------------------------------
 
     pub fn testcase_dir(&self, which: Which) -> PathBuf {
@@ -346,6 +417,27 @@ impl ProblemDir {
 
     pub fn write_testcase(&self, which: Which, name: &str, content: &[u8]) -> Result<()> {
         write_bytes(&self.testcase_path(which, name), content)
+    }
+}
+
+/// 既存の `problem.toml` の `sync` の値。ファイルが無ければ true (同期する)。
+///
+/// 書き直す直前に呼ぶので、設定全体はパースしない (`problemId` などが欠けた
+/// 途中状態のファイルでも、`sync` だけは保持できるように)。
+fn existing_sync(path: &Path) -> Result<bool> {
+    if !path.is_file() {
+        return Ok(true);
+    }
+    let text = read_text(path)?;
+    let value: toml::Value = toml::from_str(&text)
+        .with_context(|| format!("{} を解釈できませんでした", display_path(path)))?;
+    match value.get("sync") {
+        None => Ok(true),
+        Some(toml::Value::Boolean(sync)) => Ok(*sync),
+        Some(other) => bail!(
+            "{} の sync は true / false で指定してください: {other}",
+            display_path(path)
+        ),
     }
 }
 
@@ -499,6 +591,53 @@ mod tests {
         // コメント付きでも TOML として読める。
         let parsed: toml::Value = toml::from_str(&body).unwrap();
         assert_eq!(parsed["judgeType"].as_integer(), Some(2));
+    }
+
+    /// pull は problem.toml を丸ごと書き直すが、ローカル専用の sync = false は
+    /// 消えてはいけない (消えると、止めたはずの同期が pull のあと再開してしまう)。
+    #[test]
+    fn sync_false_survives_settings_rewrite() {
+        let root = std::env::temp_dir().join(format!("yuki-tool-sync-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let dir = ProblemDir::new(root.clone(), 13954);
+        let settings = ProblemSettings {
+            title: "t".into(),
+            tags: String::new(),
+            level: 1.0,
+            time_limit_ms: 2000,
+            memory_limit: 1024,
+            eps_mode: "-".into(),
+            eps: "0.0".into(),
+            wip: true,
+            recruiting_tester: false,
+            problem_type: 0,
+            judge_type: 0,
+            show_ans: false,
+            enable_pure_judge: false,
+            force_single_server_judge: false,
+            allowed_langs: vec![],
+        };
+
+        dir.write_settings(&settings).unwrap();
+        let written = read_problem_file(&dir.settings_path()).unwrap();
+        assert!(written.sync, "既定は同期する (sync 行は書かない)");
+
+        fs::write(
+            dir.settings_path(),
+            "problemId = 13954\nsync = false\ntitle = \"t\"\n",
+        )
+        .unwrap();
+        dir.write_settings(&settings).unwrap();
+        let rewritten = read_problem_file(&dir.settings_path()).unwrap();
+        assert!(!rewritten.sync, "書き直しても sync = false は保持する");
+
+        fs::write(dir.settings_path(), "sync = 1\n").unwrap();
+        assert!(
+            dir.write_settings(&settings).is_err(),
+            "bool 以外の sync は黙って true 扱いにしない"
+        );
+        fs::remove_dir_all(&root).unwrap();
     }
 
     /// ファイル名は A-Za-z0-9._ 以外が落ちる。
