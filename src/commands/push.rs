@@ -201,10 +201,21 @@ fn push_judge_code(
         Some(status) if status == JUDGE_STATUS_OK => {
             println!("  ジャッジコード: コンパイル成功 ({status})");
         }
-        Some(status) => bail!(
-            "ジャッジコードのコンパイルに失敗しました ({status})。\
-             https://yukicoder.me/problems/{problem_id}/edit で内容を確認してください。"
-        ),
+        Some(status) => {
+            // コンパイルメッセージは保存レスポンスに無いので、取得し直す。
+            let message = client.get_judge_code(problem_id)?.compile_message;
+            let message = message.trim();
+            bail!(
+                "ジャッジコードのコンパイルに失敗しました ({status})。\
+                 https://yukicoder.me/problems/{problem_id}/edit で内容を確認してください。{}",
+                if message.is_empty() {
+                    String::new()
+                } else {
+                    // 先頭 2000 バイトで切れることがある。
+                    format!("\nコンパイルメッセージ (長いと途中で切れます):\n{message}")
+                }
+            )
+        }
         None if options.wait_compile => println!(
             "  ジャッジコード: {COMPILE_TIMEOUT:?} 待ってもコンパイルが終わりませんでした。\
              `yuki-tool pull` で後から確認してください。"
@@ -267,7 +278,7 @@ fn push_validator(
                     println!("  validator: 差分なし (検証状態: {})", remote.status);
                     return Ok(());
                 }
-                return fail_validation(problem_id, &remote.status);
+                return fail_validation(problem_id, &remote);
             }
             println!("  validator: 差分はありませんが、検証が終わっていないので結果を待ちます");
         }
@@ -307,7 +318,7 @@ fn push_validator(
             println!("  validator: 検証成功 ({})", validator.status);
             Ok(())
         }
-        Some(validator) => fail_validation(problem_id, &validator.status),
+        Some(validator) => fail_validation(problem_id, &validator),
         None => {
             println!(
                 "  validator: {VALIDATION_TIMEOUT:?} 待っても検証が終わりませんでした。\
@@ -321,7 +332,11 @@ fn push_validator(
 
 /// validator の検証失敗をエラーにする。壊れたテストケースや validator を
 /// 黙って残さないため、push 自体を失敗させる。
-fn fail_validation(problem_id: i64, status: &str) -> Result<()> {
+fn fail_validation(
+    problem_id: i64,
+    validator: &crate::api::models::ValidatorContent,
+) -> Result<()> {
+    let status = validator.status.as_str();
     let what = match status {
         "WA" => "テストケースが validator を通りませんでした",
         "CE" => "validator のコンパイルに失敗しました",
@@ -329,8 +344,9 @@ fn fail_validation(problem_id: i64, status: &str) -> Result<()> {
         _ => "validator の検証に失敗しました",
     };
     bail!(
-        "{what} ({status})。\
-         https://yukicoder.me/problems/{problem_id}/validation で内容を確認してください。"
+        "{what} ({status})。{}\n\
+         https://yukicoder.me/problems/{problem_id}/validation で全体を確認できます。",
+        validator.failure_details()
     )
 }
 
