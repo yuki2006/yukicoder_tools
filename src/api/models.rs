@@ -287,36 +287,23 @@ pub struct ValidatorContent {
     /// `category == "judging"` の間は実行中・実行待ち ([`judging_ids`])。
     #[serde(default)]
     pub status: String,
-    /// 最後に検証が終わった時刻 (unix ナノ秒)。未登録・未実行なら 0。
-    #[serde(default)]
-    pub latest_check: i64,
-    /// テストケースが最後に更新された時刻 (unix ナノ秒)。一度も更新して
-    /// いなければ 0。テストケースの更新と同時に (再検証より先に) 進み、
-    /// `status` も同時に `Pending` になる。再検証は 10 秒のデバウンスの後に走る。
-    #[serde(default)]
-    pub test_case_latest: i64,
 }
 
 impl ValidatorContent {
     /// 今のテストケースに対する検証結果が出ているか。
     ///
-    /// 「status が judging (実行中・実行待ち) でない」ことに加えて、検証時刻が
-    /// テストケース更新時刻より後であることも見る。サーバはテストケース更新と
-    /// 同時に `Pending` を立てるので通常は status だけで判定できるが、status と
-    /// タイムスタンプの更新の間に挟まるポーリングや、`Pending` を立てない更新
-    /// 経路が将来できた場合への保険としてタイムスタンプも併用する。
+    /// status が judging (実行中・実行待ち) でなければ結果が出ている。サーバは
+    /// テストケースの更新と同時に `Pending` を立てるので、更新直後に前回の
+    /// 結果を読んでしまうことはない (再検証自体は 10 秒のデバウンス後に走る)。
     ///
-    /// 比較は `>=` ではなく `>`。サーバのタイムスタンプは秒精度なので、同一
-    /// 秒内に「テストケース更新 → 前回の検証完了の記録」が入ると `=` になり
-    /// 得る。その場合も再検証は必ず後から走って `latest_check` を進める。
+    /// レスポンスには検証時刻とテストケース更新時刻 (`latestCheck` /
+    /// `testCaseLatest`) もあるが、status だけで判定できるので読まない。
     ///
     /// `judging` は `/v1/statuses` から作った非終端 ID の集合 ([`judging_ids`])。
     /// 語彙の列挙はクライアントに持たない (増えることがあり、実際に `Pending`
     /// が増えた)。空文字列は未登録。
     pub fn is_up_to_date(&self, judging: &HashSet<String>) -> bool {
-        !self.status.is_empty()
-            && !judging.contains(self.status.as_str())
-            && self.latest_check > self.test_case_latest
+        !self.status.is_empty() && !judging.contains(self.status.as_str())
     }
 }
 
@@ -528,18 +515,14 @@ mod tests {
 
     /// validator の完了判定。非終端かどうかは `/v1/statuses` の judging 分類を
     /// 正とし、語彙の列挙はクライアントに持たない (増えることがあり、実際に
-    /// Pending が増えた)。
-    ///
-    /// 完了には「status が judging でない」だけでなく、検証時刻がテストケース
-    /// 更新時刻より後であることも要求する (前回の終端値を今回の結果と取り
-    /// 違えないための保険)。タイムスタンプは秒精度なので、同時刻 (`=`) も
-    /// 未完了として扱う。
+    /// Pending が増えた)。テストケース更新と同時に `Pending` が立つことは
+    /// サーバ側が保証するので、判定は status だけで足りる。
     #[test]
-    fn validator_result_must_be_newer_than_the_testcases() {
+    fn validator_result_follows_the_judging_category() {
         let statuses = [
             ("WJ", "judging"),
             ("Pending", "judging"),
-            ("NewWait", "judging"), // 将来増えた非終端もサーバの分類だけで追従する
+            ("NewWait", "judging"), // 実在しない値。CLI が知らない ID でも分類だけで扱える
             ("AC", "success"),
             ("WA", "wrong"),
         ]
@@ -548,37 +531,23 @@ mod tests {
             category: category.into(),
         });
         let judging = judging_ids(&statuses);
-        let validator = |status: &str, latest_check: i64, test_case_latest: i64| ValidatorContent {
+        let validator = |status: &str| ValidatorContent {
             status: status.into(),
-            latest_check,
-            test_case_latest,
             ..Default::default()
         };
 
-        assert!(validator("AC", 200, 100).is_up_to_date(&judging));
+        assert!(validator("AC").is_up_to_date(&judging));
         assert!(
-            !validator("AC", 100, 200).is_up_to_date(&judging),
-            "テストケースの方が新しい間は、前回の AC で完了にしない"
-        );
-        assert!(
-            !validator("AC", 100, 100).is_up_to_date(&judging),
-            "同時刻は未完了"
+            validator("WA").is_up_to_date(&judging),
+            "失敗の終端も「結果が出た」ではある"
         );
         for in_progress in ["WJ", "Pending", "NewWait"] {
             assert!(
-                !validator(in_progress, 200, 100).is_up_to_date(&judging),
+                !validator(in_progress).is_up_to_date(&judging),
                 "{in_progress} は実行中・実行待ち"
             );
         }
-        assert!(
-            validator("WA", 200, 100).is_up_to_date(&judging),
-            "失敗の終端も「結果が出た」ではある"
-        );
-        assert!(
-            validator("AC", 100, 0).is_up_to_date(&judging),
-            "テストケース未更新 (NULL=0) でも結果があれば完了"
-        );
-        assert!(!validator("", 200, 100).is_up_to_date(&judging), "未登録");
+        assert!(!validator("").is_up_to_date(&judging), "未登録");
     }
 
     /// API は eps を文字列でも数値でも返す。

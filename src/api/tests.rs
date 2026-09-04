@@ -134,10 +134,10 @@ fn validator_is_none_when_the_api_is_missing() {
     server.join().unwrap();
 }
 
-/// validator のレスポンスにはタイムスタンプ 2 つが含まれ、片方が欠けても
-/// 0 として読める (行が無いときは全フィールドが空・0)。
+/// validator のレスポンスを読める。使わないフィールド (latestCheck /
+/// testCaseLatest) が付いていても壊れない。行が無いときは全フィールドが空。
 #[test]
-fn validator_is_parsed_with_timestamps() {
+fn validator_is_parsed() {
     let (base_url, server) = serve_once(
         200,
         r#"{"langId":"cpp17","source":"x","status":"AC",
@@ -156,7 +156,6 @@ fn validator_is_parsed_with_timestamps() {
     let (base_url, server) = serve_once(200, r#"{"langId":"","source":"","status":""}"#);
     let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
     let empty = client.get_validator(13954).unwrap().unwrap();
-    assert_eq!(empty.latest_check, 0, "欠けたフィールドは 0");
     assert!(!empty.is_up_to_date(&judging), "未登録は未完了");
     server.join().unwrap();
 }
