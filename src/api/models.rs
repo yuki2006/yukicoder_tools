@@ -300,8 +300,7 @@ impl ValidatorContent {
     /// `testCaseLatest`) もあるが、status だけで判定できるので読まない。
     ///
     /// `judging` は `/v1/statuses` から作った非終端 ID の集合 ([`judging_ids`])。
-    /// 語彙の列挙はクライアントに持たない (増えることがあり、実際に `Pending`
-    /// が増えた)。空文字列は未登録。
+    /// 空文字列は未登録。
     pub fn is_up_to_date(&self, judging: &HashSet<String>) -> bool {
         !self.status.is_empty() && !judging.contains(self.status.as_str())
     }
@@ -500,7 +499,7 @@ mod tests {
 
     /// ジャッジコードのコンパイル状態は `WJ` → `Judge` → `AC` と遷移する。
     /// 途中の `Judge` を確定扱いすると、コンパイルが通っているのに失敗として
-    /// 報告してしまう (実際にそうなった)。
+    /// 報告してしまう。
     #[test]
     fn only_ac_and_ce_are_final_judge_statuses() {
         assert!(judge_status_is_final("AC"));
@@ -514,9 +513,8 @@ mod tests {
     }
 
     /// validator の完了判定。非終端かどうかは `/v1/statuses` の judging 分類を
-    /// 正とし、語彙の列挙はクライアントに持たない (増えることがあり、実際に
-    /// Pending が増えた)。テストケース更新と同時に `Pending` が立つことは
-    /// サーバ側が保証するので、判定は status だけで足りる。
+    /// 正とする。テストケース更新と同時に `Pending` が立つことはサーバ側が
+    /// 保証するので、判定は status だけで足りる。
     #[test]
     fn validator_result_follows_the_judging_category() {
         let statuses = [

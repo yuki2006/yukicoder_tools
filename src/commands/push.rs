@@ -261,9 +261,8 @@ fn push_validator(
     }
 
     // 非終端 (実行中・実行待ち) の判定は /v1/statuses の judging 分類を正と
-    // する。語彙の列挙はクライアントに持たない (増えることがあり、実際に
-    // Pending が増えた)。この API を持たない古いサーバでは判定できないので、
-    // 保存だけして結果は待たない。
+    // する (語彙の列挙はクライアントに持たない)。この API を持たない古い
+    // サーバでは判定できないので、保存だけして結果は待たない。
     let judging = client.statuses()?.map(|list| judging_ids(&list));
 
     if unchanged {
