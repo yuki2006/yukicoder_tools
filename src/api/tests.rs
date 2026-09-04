@@ -149,19 +149,20 @@ fn validator_is_parsed_with_timestamps() {
 
     assert_eq!(validator.lang_id, "cpp17");
     assert_eq!(validator.status, "AC");
-    assert!(validator.is_up_to_date(None));
+    let judging = std::collections::HashSet::from(["WJ".to_string()]);
+    assert!(validator.is_up_to_date(&judging));
     server.join().unwrap();
 
     let (base_url, server) = serve_once(200, r#"{"langId":"","source":"","status":""}"#);
     let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
     let empty = client.get_validator(13954).unwrap().unwrap();
     assert_eq!(empty.latest_check, 0, "欠けたフィールドは 0");
-    assert!(!empty.is_up_to_date(None));
+    assert!(!empty.is_up_to_date(&judging), "未登録は未完了");
     server.join().unwrap();
 }
 
 /// `/v1/statuses` を持たないサーバでは 404 を「未対応」として扱い、
-/// 組み込みの一覧へのフォールバックに進めるようにする。
+/// 呼び出し側は「検証結果を待たない」に進めるようにする。
 #[test]
 fn statuses_are_parsed_and_404_means_unsupported() {
     let (base_url, server) = serve_once(
