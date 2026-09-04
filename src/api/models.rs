@@ -282,7 +282,7 @@ pub struct ValidatorContent {
     pub source: String,
     /// 検証状態。ジャッジコードと違い、通常ジャッジとして走るので提出と同じ
     /// ステータス一式 (AC/WA/RE/TLE/MLE/OLE/CE/IE) が出る。
-    /// 非終端は `Pending` / `WJ` / `Judge` の 3 つ ([`validator_status_is_final`])。
+    /// 非終端は `Pending` / `WJ` / `WJ_PURE` / `Judge` の 4 つ ([`validator_status_is_final`])。
     #[serde(default)]
     pub status: String,
     /// 最後に検証が終わった時刻 (unix ナノ秒)。未登録・未実行なら 0。
@@ -325,11 +325,15 @@ pub struct ValidatorRequest {
 /// validator の検証状態が確定しているか。
 ///
 /// 非終端は `Pending` (テストケース変更後のデバウンス待ち)、`WJ` (待機)、
-/// `Judge` (実行中) の 3 つで、空文字列は未登録。
+/// `WJ_PURE` (純コード判定待ち)、`Judge` (実行中) の 4 つで、空文字列は未登録。
 /// 終端は列挙しない (AC/WA/RE/TLE/MLE/OLE/CE/IE と幅があり、未知の値を
 /// 待ち続けるとタイムアウトまで止まるため、非終端側を列挙する)。
 pub fn validator_status_is_final(status: &str) -> bool {
-    !status.is_empty() && status != "Pending" && status != "WJ" && status != "Judge"
+    !status.is_empty()
+        && status != "Pending"
+        && status != "WJ"
+        && status != "WJ_PURE"
+        && status != "Judge"
 }
 
 /// `GET /v1/problems/{id}/editorial` のレスポンス。
@@ -508,7 +512,7 @@ mod tests {
         }
         // Pending はテストケース変更の直後に立つ (デバウンス待ち)。これを
         // 終端扱いすると、再検証が始まる前に前回の結果へ進んでしまう。
-        for not_final in ["Pending", "WJ", "Judge", ""] {
+        for not_final in ["Pending", "WJ", "WJ_PURE", "Judge", ""] {
             assert!(
                 !validator_status_is_final(not_final),
                 "{not_final:?} を終端扱いしてはいけない"
