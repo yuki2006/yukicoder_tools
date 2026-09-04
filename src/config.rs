@@ -57,6 +57,8 @@ impl Default for Config {
 pub struct Problem {
     pub id: i64,
     pub dir: PathBuf,
+    /// `problem.toml` の `sync`。false なら `--all` の対象にしない。
+    pub sync: bool,
 }
 
 /// 設定ファイルと、それが置かれているディレクトリ。
@@ -154,13 +156,18 @@ impl Repo {
 
     /// コマンドで対象にする問題 ID を決める。
     ///
-    /// - `--all` ならリポジトリにあるすべて
-    /// - ID 指定があればそれ
+    /// - `--all` ならリポジトリにあるすべて。ただし `sync = false` の問題は
+    ///   スキップする (トークンの失効中などに CI の同期を問題ごとに止める用)
+    /// - ID 指定があればそれ。`sync = false` でも動く (止めたまま手元から
+    ///   操作できるように)
     /// - どちらも無く、リポジトリに問題が 1 つだけならそれ
     pub fn target_problems(&self, explicit: Option<i64>, all: bool) -> Result<Vec<i64>> {
         if let Some(id) = explicit {
             if all {
                 bail!("--all と問題 ID は同時に指定できません");
+            }
+            if self.problems()?.iter().any(|p| p.id == id && !p.sync) {
+                println!("問題 {id}: problem.toml で sync = false ですが、ID 指定なので実行します");
             }
             return Ok(vec![id]);
         }
@@ -172,10 +179,22 @@ impl Repo {
                     crate::local::display_path(self.root.join(&self.config.problems_dir))
                 );
             }
-            return Ok(problems.into_iter().map(|p| p.id).collect());
+            let (active, skipped): (Vec<_>, Vec<_>) = problems.into_iter().partition(|p| p.sync);
+            for p in &skipped {
+                println!(
+                    "問題 {}: problem.toml で sync = false のためスキップします ({})",
+                    p.id,
+                    crate::local::display_path(&p.dir)
+                );
+            }
+            return Ok(active.into_iter().map(|p| p.id).collect());
         }
         match problems.as_slice() {
-            [only] => Ok(vec![only.id]),
+            [only] if only.sync => Ok(vec![only.id]),
+            [only] => bail!(
+                "問題 {} は problem.toml で sync = false です。対象にするなら ID を指定してください。",
+                only.id
+            ),
             [] => {
                 bail!("対象の問題 ID を指定してください (`yuki-tool init <問題ID>` で取得できます)")
             }
@@ -211,6 +230,7 @@ fn collect_problems(dir: &Path, found: &mut Vec<Problem>) -> Result<()> {
         found.push(Problem {
             id,
             dir: dir.to_path_buf(),
+            sync: file.sync,
         });
         return Ok(());
     }
@@ -560,6 +580,40 @@ mod tests {
     fn target_problems_uses_the_only_problem() {
         let repo = repo_with(&[("only", Some(13954))], "single");
         assert_eq!(repo.target_problems(None, false).unwrap(), vec![13954]);
+    }
+
+    fn disable_sync(repo: &Repo, dir: &str) {
+        let path = repo.root.join("problems").join(dir).join("problem.toml");
+        let text = format!("sync = false\n{}", fs::read_to_string(&path).unwrap());
+        fs::write(&path, text).unwrap();
+    }
+
+    /// sync = false の問題は --all から外れる。トークンの失効中などに、その
+    /// 問題だけ CI の同期を止めるため。ID を指定した実行では動く。
+    #[test]
+    fn sync_false_is_skipped_by_all() {
+        let repo = repo_with(&[("a", Some(1)), ("b", Some(2))], "sync-skip");
+        disable_sync(&repo, "b");
+
+        assert_eq!(repo.target_problems(None, true).unwrap(), vec![1]);
+        assert_eq!(
+            repo.target_problems(Some(2), false).unwrap(),
+            vec![2],
+            "ID 指定なら sync = false でも動く"
+        );
+    }
+
+    /// 問題が 1 つだけでも、sync = false なら暗黙には選ばない。
+    #[test]
+    fn the_only_problem_with_sync_false_is_not_implicit() {
+        let repo = repo_with(&[("only", Some(13954))], "sync-single");
+        disable_sync(&repo, "only");
+
+        assert!(repo.target_problems(None, false).is_err());
+        assert_eq!(
+            repo.target_problems(Some(13954), false).unwrap(),
+            vec![13954]
+        );
     }
 
     /// リポジトリにまだ無い問題は、既定の場所を使う (init / pull 用)。

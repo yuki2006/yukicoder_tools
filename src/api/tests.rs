@@ -122,6 +122,44 @@ fn judge_code_is_parsed_when_available() {
     server.join().unwrap();
 }
 
+/// validator の API を持たないサーバでも、404 を「未対応」として扱い
+/// pull を止めない (ジャッジコードと同じ契約)。
+#[test]
+fn validator_is_none_when_the_api_is_missing() {
+    let (base_url, server) = serve_once(404, "Not Found");
+    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+
+    assert!(client.get_validator(13954).unwrap().is_none());
+
+    server.join().unwrap();
+}
+
+/// validator のレスポンスにはタイムスタンプ 2 つが含まれ、片方が欠けても
+/// 0 として読める (行が無いときは全フィールドが空・0)。
+#[test]
+fn validator_is_parsed_with_timestamps() {
+    let (base_url, server) = serve_once(
+        200,
+        r#"{"langId":"cpp17","source":"x","status":"AC",
+           "latestCheck":1756900000000000000,"testCaseLatest":1756800000000000000}"#,
+    );
+    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+
+    let validator = client.get_validator(13954).unwrap().unwrap();
+
+    assert_eq!(validator.lang_id, "cpp17");
+    assert_eq!(validator.status, "AC");
+    assert!(validator.is_up_to_date());
+    server.join().unwrap();
+
+    let (base_url, server) = serve_once(200, r#"{"langId":"","source":"","status":""}"#);
+    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+    let empty = client.get_validator(13954).unwrap().unwrap();
+    assert_eq!(empty.latest_check, 0, "欠けたフィールドは 0");
+    assert!(!empty.is_up_to_date());
+    server.join().unwrap();
+}
+
 /// サーバ由来のテストケース名も検証する。ローカルパスに join し URL にも
 /// 埋め込むので、'/' や '..' を通すと外に書いてしまう。
 #[test]

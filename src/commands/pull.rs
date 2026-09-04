@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result};
 use crate::api::models::{Statement, Which};
 use crate::api::YukicoderClient;
 use crate::commands::Context;
-use crate::local::{display_path, GeneratorConfig, JudgeConfig, ProblemDir};
+use crate::local::{display_path, GeneratorConfig, JudgeConfig, ProblemDir, ValidatorConfig};
 use crate::Target;
 
 pub fn run(target: &Target, testcases: bool) -> Result<()> {
@@ -99,6 +99,34 @@ pub fn pull_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> 
                     "不明"
                 } else {
                     &code.status
+                }
+            );
+        }
+    }
+
+    // validator。ジャッジコードと同じく、この API を持たないサーバでは None。
+    match client.get_validator(problem_id)? {
+        None => println!("  validator: このサーバは validator の API に対応していません"),
+        Some(validator) if validator.source.trim().is_empty() => {
+            println!("  validator: 未登録")
+        }
+        Some(validator) => {
+            let source_file = dir
+                .existing_validator_config()?
+                .map(|config| config.source_file)
+                .unwrap_or_else(|| source_file_name("validator", &validator.lang_id));
+            let config = ValidatorConfig {
+                lang_id: validator.lang_id.clone(),
+                source_file: source_file.clone(),
+            };
+            dir.write_validator(&config, &validator.source)?;
+            println!(
+                "  validator -> {} (検証状態: {})",
+                display_path(dir.validator_dir().join(&source_file)),
+                if validator.status.is_empty() {
+                    "不明"
+                } else {
+                    &validator.status
                 }
             );
         }

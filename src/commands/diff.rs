@@ -109,6 +109,20 @@ fn diff_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> Resu
         }
     }
 
+    if dir.has_validator() {
+        let (config, source) = dir.read_validator()?;
+        match client.get_validator(problem_id)? {
+            None => println!("validator: このサーバは validator の API に対応していません"),
+            Some(remote) => {
+                if remote.lang_id != config.lang_id {
+                    differs = true;
+                    println!("validator langId: {} -> {}", remote.lang_id, config.lang_id);
+                }
+                differs |= print_text_diff("validator", &remote.source, &source);
+            }
+        }
+    }
+
     if testcases {
         for which in [Which::In, Which::Out] {
             differs |= diff_testcases(client, dir, which)?;
