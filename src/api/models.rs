@@ -236,6 +236,10 @@ pub struct JudgeCodeContent {
     /// コンパイル状態。保存直後は `WJ`、その後 `AC` か `CE` になる。
     #[serde(default)]
     pub status: String,
+    /// コンパイラ・システムからのメッセージ。先頭 2000 バイトで切れることが
+    /// あり、警告も入るので、**空でない = 失敗ではない** (失敗は status で見る)。
+    #[serde(default)]
+    pub compile_message: String,
 }
 
 /// `PUT /v1/problems/{id}/code` のリクエスト。
@@ -287,6 +291,20 @@ pub struct ValidatorContent {
     /// `category == "judging"` の間は実行中・実行待ち ([`judging_ids`])。
     #[serde(default)]
     pub status: String,
+    /// コンパイラ・システムからのメッセージ。先頭 2000 バイトで切れることが
+    /// あり、警告も入るので、**空でない = 失敗ではない** (失敗は status で見る)。
+    #[serde(default)]
+    pub compile_message: String,
+    /// ケースごとの検証結果。未登録なら null。
+    #[serde(default)]
+    pub cases: Option<Vec<ValidatorCase>>,
+}
+
+/// validator のケース別結果 (`cases` の要素)。
+#[derive(Debug, Clone, Deserialize)]
+pub struct ValidatorCase {
+    pub name: String,
+    pub status: String,
 }
 
 impl ValidatorContent {
@@ -304,7 +322,50 @@ impl ValidatorContent {
     pub fn is_up_to_date(&self, judging: &HashSet<String>) -> bool {
         !self.status.is_empty() && !judging.contains(self.status.as_str())
     }
+
+    /// 検証失敗の詳細。エラーメッセージに添える。
+    ///
+    /// CE ならコンパイルメッセージ、それ以外なら AC でなかったケースの一覧。
+    /// 詳細が無ければ空文字列。
+    pub fn failure_details(&self) -> String {
+        if self.status == "CE" {
+            let message = self.compile_message.trim();
+            if message.is_empty() {
+                return String::new();
+            }
+            // compileMessage は先頭 2000 バイトで切れることがある。
+            return format!("\nコンパイルメッセージ (長いと途中で切れます):\n{message}");
+        }
+        let Some(cases) = &self.cases else {
+            return String::new();
+        };
+        let failed: Vec<String> = cases
+            .iter()
+            .filter(|c| c.status != JUDGE_STATUS_OK)
+            .map(|c| format!("{} ({})", c.name, c.status))
+            .collect();
+        if failed.is_empty() {
+            return String::new();
+        }
+        let more = if failed.len() > FAILED_CASES_SHOWN {
+            format!(" 他 {} 件", failed.len() - FAILED_CASES_SHOWN)
+        } else {
+            String::new()
+        };
+        format!(
+            "\n通らなかったケース: {}{more}",
+            failed
+                .iter()
+                .take(FAILED_CASES_SHOWN)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
 }
+
+/// エラーメッセージに列挙する、通らなかったケースの上限。
+const FAILED_CASES_SHOWN: usize = 10;
 
 /// `PUT /v1/problems/{id}/validator` のリクエスト。
 #[derive(Debug, Clone, Serialize)]
@@ -556,6 +617,48 @@ mod tests {
             );
         }
         assert!(!validator("").is_up_to_date(&judging), "未登録");
+    }
+
+    /// 検証失敗の詳細。CE ならコンパイルメッセージ、それ以外は AC でなかった
+    /// ケースの一覧。多すぎる場合は省略し、無ければ空。
+    #[test]
+    fn validation_failure_details_follow_the_status() {
+        let case = |name: &str, status: &str| ValidatorCase {
+            name: name.into(),
+            status: status.into(),
+        };
+        let with = |status: &str, cases: Vec<ValidatorCase>| ValidatorContent {
+            status: status.into(),
+            cases: Some(cases),
+            ..Default::default()
+        };
+
+        let wa = with("WA", vec![case("1.txt", "AC"), case("2.txt", "MLE")]);
+        assert_eq!(wa.failure_details(), "\n通らなかったケース: 2.txt (MLE)");
+
+        let ce = ValidatorContent {
+            status: "CE".into(),
+            compile_message: "error: expected `;`\n".into(),
+            ..Default::default()
+        };
+        assert!(ce.failure_details().contains("error: expected `;`"));
+
+        let many = with(
+            "WA",
+            (0..12).map(|i| case(&format!("{i}.txt"), "WA")).collect(),
+        );
+        assert!(many.failure_details().ends_with("他 2 件"), "{many:?}");
+
+        // 未登録 (cases が null) や、全ケース AC で status だけ失敗のような
+        // 中途半端な状態でも、詳細なしとして壊れない。
+        assert_eq!(
+            ValidatorContent {
+                status: "WA".into(),
+                ..Default::default()
+            }
+            .failure_details(),
+            ""
+        );
     }
 
     /// API は eps を文字列でも数値でも返す。
