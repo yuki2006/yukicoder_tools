@@ -9,11 +9,11 @@ use anyhow::{bail, Context as _, Result};
 
 use crate::api::models::{
     judge_status_is_final, judging_ids, EditorialRequest, GeneratorRequest, JudgeCodeRequest,
-    ProblemEditRequest, SaveResponse, ValidatorRequest, Which, JUDGE_STATUS_OK,
+    ProblemEditRequest, SaveResponse, TestcaseListing, ValidatorRequest, Which, JUDGE_STATUS_OK,
 };
 use crate::api::YukicoderClient;
 use crate::commands::Context;
-use crate::local::{display_path, ProblemDir};
+use crate::local::{display_path, sha256_hex, ProblemDir};
 use crate::Target;
 
 #[derive(Debug, Clone, Copy)]
@@ -401,17 +401,25 @@ fn push_testcases(
 ) -> Result<bool> {
     let problem_id = dir.problem_id();
     let local = dir.read_testcases(which)?;
-    let remote_names = client.list_testcases(problem_id, which)?;
+    let listing = client.list_testcases_detail(problem_id, which)?;
+    let remote_names: Vec<String> = listing.names().into_iter().map(str::to_string).collect();
 
     let mut changed_files: Vec<(String, Vec<u8>)> = Vec::new();
     for (name, content) in &local {
-        let changed = if remote_names.iter().any(|n| n == name) {
-            let remote = client
-                .get_testcase(problem_id, which, name)
-                .with_context(|| format!("テストケース {which}/{name} の取得"))?;
-            &remote != content
-        } else {
-            true
+        // 一覧の sha256 は保存されているバイト列に対する値なので、ダウンロード
+        // せずに比較できる。detail 未対応のサーバでは 1 件ずつ取得して比べる。
+        let changed = match &listing {
+            TestcaseListing::Details(details) => details
+                .iter()
+                .find(|d| &d.name == name)
+                .is_none_or(|d| d.sha256 != sha256_hex(content)),
+            TestcaseListing::Names(names) if names.contains(name) => {
+                let remote = client
+                    .get_testcase(problem_id, which, name)
+                    .with_context(|| format!("テストケース {which}/{name} の取得"))?;
+                &remote != content
+            }
+            TestcaseListing::Names(_) => true,
         };
         if changed {
             changed_files.push((name.clone(), content.clone()));
@@ -483,8 +491,10 @@ fn push_testcases(
 /// スペース、末尾の改行)。**その規則はクライアントに持たせず、保存された
 /// 結果を取り込む。** 規則を写すと、サーバ側が変わったときに黙って食い違う。
 ///
-/// 書き換えは非同期に走るので、少し待ってから取得する。それでも間に合わな
-/// かった場合は、次の `yuki-tool pull` で揃う。
+/// 書き換えは保存と同期で行われるので、アップロード直後の一覧 (`?detail=1`)
+/// に確定したハッシュが載る。送った内容とハッシュが違うファイルだけを取得
+/// して書き戻す。detail 未対応の古いサーバは書き換えも非同期なので、少し
+/// 待ってから全件を取得して比べる。
 fn take_back_normalized(
     client: &YukicoderClient,
     dir: &ProblemDir,
@@ -494,8 +504,23 @@ fn take_back_normalized(
     if uploaded.is_empty() {
         return Ok(());
     }
-    std::thread::sleep(NORMALIZE_WAIT);
-    for (name, sent) in uploaded {
+    let adjusted: Vec<&(String, Vec<u8>)> =
+        match client.list_testcases_detail(dir.problem_id(), which)? {
+            TestcaseListing::Details(details) => uploaded
+                .iter()
+                .filter(|(name, sent)| {
+                    details
+                        .iter()
+                        .find(|d| &d.name == name)
+                        .is_none_or(|d| d.sha256 != sha256_hex(sent))
+                })
+                .collect(),
+            TestcaseListing::Names(_) => {
+                std::thread::sleep(NORMALIZE_WAIT);
+                uploaded.iter().collect()
+            }
+        };
+    for (name, sent) in adjusted {
         let stored = client
             .get_testcase(dir.problem_id(), which, name)
             .with_context(|| format!("テストケース {which}/{name} の取得"))?;
@@ -512,7 +537,7 @@ fn take_back_normalized(
     Ok(())
 }
 
-/// サーバ側の書き換えが終わるのを待つ時間。
+/// detail 未対応のサーバで、非同期の書き換えが終わるのを待つ時間。
 const NORMALIZE_WAIT: Duration = Duration::from_secs(2);
 
 /// validator の検証を待つ時間。

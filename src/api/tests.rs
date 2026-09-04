@@ -182,6 +182,41 @@ fn statuses_are_parsed_and_404_means_unsupported() {
     server.join().unwrap();
 }
 
+/// テストケース一覧 (`?detail=1`) は、ハッシュ付き (対応サーバ) と名前だけ
+/// (未対応サーバ) のどちらの形でも受け取れる。名前の検証はどちらにも掛かる。
+#[test]
+fn testcase_listing_accepts_both_shapes() {
+    use super::models::{TestcaseListing, Which};
+
+    let (base_url, server) = serve_once(
+        200,
+        r#"[{"name":"1.txt","size":4,"sha256":"9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a"}]"#,
+    );
+    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+    let TestcaseListing::Details(details) = client.list_testcases_detail(13954, Which::In).unwrap()
+    else {
+        panic!("detail 対応サーバの応答はハッシュ付きとして読む");
+    };
+    assert_eq!(details[0].name, "1.txt");
+    assert!(details[0].sha256.starts_with("9f64a747"));
+    server.join().unwrap();
+
+    let (base_url, server) = serve_once(200, r#"["1.txt","2.txt"]"#);
+    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+    let listing = client.list_testcases_detail(13954, Which::In).unwrap();
+    assert!(matches!(listing, TestcaseListing::Names(_)));
+    assert_eq!(listing.names(), ["1.txt", "2.txt"]);
+    server.join().unwrap();
+
+    let (base_url, server) = serve_once(200, r#"[{"name":"../evil","size":1,"sha256":"ab"}]"#);
+    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+    assert!(
+        client.list_testcases_detail(13954, Which::In).is_err(),
+        "ハッシュ付きの形でも名前は検証する"
+    );
+    server.join().unwrap();
+}
+
 /// サーバ由来のテストケース名も検証する。ローカルパスに join し URL にも
 /// 埋め込むので、'/' や '..' を通すと外に書いてしまう。
 #[test]

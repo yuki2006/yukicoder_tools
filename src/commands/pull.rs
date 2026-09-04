@@ -2,10 +2,12 @@
 
 use anyhow::{Context as _, Result};
 
-use crate::api::models::{Statement, Which};
+use crate::api::models::{Statement, TestcaseListing, Which};
 use crate::api::YukicoderClient;
 use crate::commands::Context;
-use crate::local::{display_path, GeneratorConfig, JudgeConfig, ProblemDir, ValidatorConfig};
+use crate::local::{
+    display_path, sha256_hex, GeneratorConfig, JudgeConfig, ProblemDir, ValidatorConfig,
+};
 use crate::Target;
 
 pub fn run(target: &Target, testcases: bool) -> Result<()> {
@@ -151,14 +153,34 @@ pub fn pull_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> 
 
     if testcases {
         for which in [Which::In, Which::Out] {
-            let names = client.list_testcases(problem_id, which)?;
+            let listing = client.list_testcases_detail(problem_id, which)?;
+            // ローカルが読めない (不正なファイル名など) 場合は、手元に無いもの
+            // として全件取得に倒す。取得結果で上書きされるだけなので安全。
+            let local = dir.read_testcases(which).unwrap_or_default();
+            let mut downloaded = 0usize;
+            let names = listing.names();
             for name in &names {
+                // 一覧の sha256 が手元と同じファイルはダウンロードしない。
+                // detail 未対応のサーバでは全件を取得する。
+                if let TestcaseListing::Details(details) = &listing {
+                    let local_hash = local.get(*name).map(|content| sha256_hex(content));
+                    if details
+                        .iter()
+                        .any(|d| &d.name == name && Some(&d.sha256) == local_hash.as_ref())
+                    {
+                        continue;
+                    }
+                }
                 let content = client
                     .get_testcase(problem_id, which, name)
                     .with_context(|| format!("テストケース {which}/{name} の取得"))?;
                 dir.write_testcase(which, name, &content)?;
+                downloaded += 1;
             }
-            println!("  テストケース {which}: {} 件", names.len());
+            println!(
+                "  テストケース {which}: {} 件 (取得 {downloaded} 件)",
+                names.len()
+            );
         }
     }
 

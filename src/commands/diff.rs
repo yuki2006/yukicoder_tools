@@ -5,7 +5,7 @@
 use anyhow::Result;
 use similar::TextDiff;
 
-use crate::api::models::{ProblemSettings, Statement, Which};
+use crate::api::models::{ProblemSettings, Statement, TestcaseListing, Which};
 use crate::api::YukicoderClient;
 use crate::commands::Context;
 use crate::local::ProblemDir;
@@ -135,23 +135,37 @@ fn diff_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> Resu
 fn diff_testcases(client: &YukicoderClient, dir: &ProblemDir, which: Which) -> Result<bool> {
     let problem_id = dir.problem_id();
     let local = dir.read_testcases(which)?;
-    let remote_names = client.list_testcases(problem_id, which)?;
+    let listing = client.list_testcases_detail(problem_id, which)?;
     let mut differs = false;
 
-    for name in &remote_names {
+    for name in listing.names() {
         if !local.contains_key(name) {
             differs = true;
             println!("テストケース {which}/{name}: yukicoder にのみ存在");
         }
     }
     for (name, content) in &local {
-        if !remote_names.iter().any(|n| n == name) {
-            differs = true;
-            println!("テストケース {which}/{name}: ローカルにのみ存在");
-            continue;
-        }
-        let remote = client.get_testcase(problem_id, which, name)?;
-        if &remote != content {
+        // 一覧の sha256 は保存されているバイト列に対する値なので、ダウンロード
+        // せずに比較できる。detail 未対応のサーバでは 1 件ずつ取得して比べる。
+        let same = match &listing {
+            TestcaseListing::Details(details) => match details.iter().find(|d| &d.name == name) {
+                Some(detail) => detail.sha256 == crate::local::sha256_hex(content),
+                None => {
+                    differs = true;
+                    println!("テストケース {which}/{name}: ローカルにのみ存在");
+                    continue;
+                }
+            },
+            TestcaseListing::Names(names) if names.contains(name) => {
+                &client.get_testcase(problem_id, which, name)? == content
+            }
+            TestcaseListing::Names(_) => {
+                differs = true;
+                println!("テストケース {which}/{name}: ローカルにのみ存在");
+                continue;
+            }
+        };
+        if !same {
             differs = true;
             println!("テストケース {which}/{name}: 内容が違います");
         }

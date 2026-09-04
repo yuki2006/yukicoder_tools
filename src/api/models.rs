@@ -410,6 +410,34 @@ pub struct Language {
     pub status: String,
 }
 
+/// `GET /file/{which}?detail=1` の要素。
+///
+/// `sha256` は保存されているバイト列 (正規化後) に対する値なので、そのまま
+/// 差分判定に使える。レスポンスには `size` もあるが使わないので読まない。
+#[derive(Debug, Clone, Deserialize)]
+pub struct TestcaseInfo {
+    pub name: String,
+    pub sha256: String,
+}
+
+/// テストケース一覧。
+///
+/// `?detail=1` に対応したサーバではハッシュ付き、古いサーバでは名前だけが返る。
+#[derive(Debug, Clone)]
+pub enum TestcaseListing {
+    Names(Vec<String>),
+    Details(Vec<TestcaseInfo>),
+}
+
+impl TestcaseListing {
+    pub fn names(&self) -> Vec<&str> {
+        match self {
+            TestcaseListing::Names(names) => names.iter().map(String::as_str).collect(),
+            TestcaseListing::Details(details) => details.iter().map(|d| d.name.as_str()).collect(),
+        }
+    }
+}
+
 /// テストケースの入出力どちらを指すか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Which {

@@ -544,6 +544,18 @@ pub fn write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
     fs::write(path, bytes).with_context(|| format!("{} を書けませんでした", display_path(path)))
 }
 
+/// バイト列の SHA-256 (16 進小文字)。
+///
+/// テストケース一覧 (`?detail=1`) の `sha256` と比較して、差分判定を
+/// ダウンロードなしで行うために使う。
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 /// サーバがファイル名から `A-Za-z0-9._` 以外を取り除いた結果を返す。
 ///
 /// アップロードした名前がそのまま保存されるとは限らない。例えば
@@ -638,6 +650,20 @@ mod tests {
             "bool 以外の sync は黙って true 扱いにしない"
         );
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// sha256 はサーバの一覧 (`?detail=1`) の値と突き合わせるので、16 進
+    /// 小文字で一致すること。
+    #[test]
+    fn sha256_matches_the_standard_encoding() {
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256_hex(b"1 2 3\n"),
+            "1def07dbe06eeb097aafec8a40329937cd20c93a83634b8221ea2b41a894310c"
+        );
     }
 
     /// ファイル名は A-Za-z0-9._ 以外が落ちる。

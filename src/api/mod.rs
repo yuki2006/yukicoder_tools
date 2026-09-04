@@ -296,14 +296,48 @@ impl YukicoderClient {
             &format!("/v1/problems/{problem_id}/file/{which}"),
             "テストケース一覧の取得",
         )?;
-        // 名前はローカルパスに join し、URL のパスにも埋め込む。サーバ由来でも
-        // 検証してから使う ('/' や '..' が混ざると外に書いてしまう)。
-        for name in &names {
-            if name.is_empty() || crate::local::sanitized_file_name(name) != *name {
+        Self::check_testcase_names(names.iter().map(String::as_str))?;
+        Ok(names)
+    }
+
+    /// テストケース一覧を、保存内容の sha256 付きで取得する (`?detail=1`)。
+    ///
+    /// detail に対応しないサーバでは名前だけの配列が返るので、どちらでも
+    /// 受け取れるようにする。
+    pub fn list_testcases_detail(
+        &self,
+        problem_id: i64,
+        which: Which,
+    ) -> Result<models::TestcaseListing> {
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Details(Vec<models::TestcaseInfo>),
+            Names(Vec<String>),
+        }
+        let wire: Wire = self.get_json(
+            &format!("/v1/problems/{problem_id}/file/{which}?detail=1"),
+            "テストケース一覧の取得",
+        )?;
+        let listing = match wire {
+            Wire::Details(details) => models::TestcaseListing::Details(details),
+            Wire::Names(names) => models::TestcaseListing::Names(names),
+        };
+        Self::check_testcase_names(listing.names().into_iter())?;
+        Ok(listing)
+    }
+
+    /// サーバ由来のテストケース名を検証する。
+    ///
+    /// 名前はローカルパスに join し、URL のパスにも埋め込む。サーバ由来でも
+    /// 検証してから使う ('/' や '..' が混ざると外に書いてしまう)。
+    fn check_testcase_names<'a>(names: impl Iterator<Item = &'a str>) -> Result<()> {
+        for name in names {
+            if name.is_empty() || crate::local::sanitized_file_name(name) != name {
                 bail!("サーバが想定外のテストケース名を返しました: {name:?}");
             }
         }
-        Ok(names)
+        Ok(())
     }
 
     /// テストケース 1 件の中身を、保存されているバイト列のまま取得する。
