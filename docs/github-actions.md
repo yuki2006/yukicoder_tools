@@ -26,11 +26,13 @@ workflow の `env` にそのまま渡します。アカウントの API キー�
 
 ### 問題をリポジトリに取り込む
 
-最初の 1 回だけローカルで実行します。
+最初の 1 回だけローカルで実行します (リポジトリ全体の設定 yukicoder.toml を作るのはこのときだけなので)。
 
 ```sh
-cargo run -- init 13954
+yuki-tool init 13954
 ```
+
+ソースから使っている場合は `cargo run -- init 13954` です (以下同様)。
 
 `yukicoder.toml` と `problems/13954/` ができます。これをコミットすれば準備完了です。
 
@@ -40,7 +42,7 @@ cargo run -- init 13954
 2 問目からは `yuki-tool new` を使います。yukicoder で問題を作って ID とトークンを発行したら、
 
 ```sh
-cargo run -- new 20000 --dir abc001/a
+yuki-tool new 20000 --dir abc001/a
 ```
 
 で `problems/abc001/a/` に問題一式 (設定・問題文テンプレート・testcases/ solutions/ の
@@ -145,10 +147,10 @@ sourceFile = "judge.cpp"
 提出は結果を人が確認するものだからです。
 
 ```sh
-cargo run -- submit --file problems/13954/solutions/main.cpp --lang cpp23
+yuki-tool submit --file problems/13954/solutions/main.cpp --lang cpp23
 # 提出しました: 提出 ID 1181846
 # AC を確認してから
-cargo run -- solution 1181846 --summary "想定解 O(N log N)"
+yuki-tool solution 1181846 --summary "想定解 O(N log N)"
 ```
 
 ## つまずきやすいところ
