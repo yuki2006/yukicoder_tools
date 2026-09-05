@@ -26,27 +26,27 @@ workflow の `env` にそのまま渡します。アカウントの API キー�
 
 ### 問題をリポジトリに取り込む
 
-最初の 1 回だけローカルで実行します (リポジトリ全体の設定 yukicoder.toml を作るのはこのときだけなので)。
+ローカルで実行します。
 
 ```sh
-yuki-tool init 13954
+yuki-tool new 13954
 ```
 
-ソースから使っている場合は `cargo run -- init 13954` です (以下同様)。
+ソースから使っている場合は `cargo run -- new 13954` です (以下同様)。
 
-`yukicoder.toml` と `problems/13954/` ができます。これをコミットすれば準備完了です。
+`problems/13954/` に問題一式 (設定・問題文・testcases/ solutions/ の骨組み) ができます。
+リポジトリ全体の設定 `yukicoder.toml` が無ければ、カレントディレクトリに作られます。
+これをコミットすれば準備完了です。
 
-ディレクトリ名は後から自由に変えられます。どの問題かは `problem.toml` の `problemId` で
-決まるので、`problems/tutorial-dp/` や `problems/abc001/a/` のような置き方もできます。
-
-2 問目からは `yuki-tool new` を使います。yukicoder で問題を作って ID とトークンを発行したら、
+2 問目以降も同じです。yukicoder で問題を作って ID とトークンを発行したら、
 
 ```sh
 yuki-tool new 20000 --dir abc001/a
 ```
 
-で `problems/abc001/a/` に問題一式 (設定・問題文テンプレート・testcases/ solutions/ の
-骨組み) ができます。
+で `problems/abc001/a/` に置けます。ディレクトリ名は後から自由に変えられます。
+どの問題かは `problem.toml` の `problemId` で決まるので、`problems/tutorial-dp/` の
+ような置き方もできます。
 
 ## 2. 更新する
 
