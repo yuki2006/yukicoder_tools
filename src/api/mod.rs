@@ -299,14 +299,29 @@ impl YukicoderClient {
     /// サーバ由来のテストケース名を検証する。
     ///
     /// 名前はローカルパスに join し、URL のパスにも埋め込む。サーバ由来でも
-    /// 検証してから使う ('/' や '..' が混ざると外に書いてしまう)。
+    /// 検証してから使う ('/' や '..' が混ざると外に書いてしまう)。これは
+    /// サーバの命名規則の写しではなく、クライアント自身の安全条件。
     fn check_testcase_names<'a>(names: impl Iterator<Item = &'a str>) -> Result<()> {
         for name in names {
-            if name.is_empty() || crate::local::sanitized_file_name(name) != name {
+            let unsafe_name = name.is_empty()
+                || name == "."
+                || name == ".."
+                || name.chars().any(|c| matches!(c, '/' | '\\' | ':'));
+            if unsafe_name {
                 bail!("サーバが想定外のテストケース名を返しました: {name:?}");
             }
         }
         Ok(())
+    }
+
+    /// テストケース名の規則 (使える文字の一覧)。認証不要。
+    ///
+    /// 使えない文字はサーバが取り除いて保存するため、push の前にこの規則で
+    /// 検証して止める。規則の中身はクライアントに持たない。
+    pub fn testcase_name_rule(&self) -> Result<String> {
+        let rule: models::TestcaseNameRule =
+            self.get_json("/v1/testcase_name_rule", "テストケース名の規則の取得")?;
+        Ok(rule.allowed_chars)
     }
 
     /// テストケース 1 件の中身を、保存されているバイト列のまま取得する。

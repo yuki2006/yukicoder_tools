@@ -390,22 +390,6 @@ impl ProblemDir {
             if name.starts_with('.') {
                 continue;
             }
-            // サーバはファイル名から A-Za-z0-9._ 以外を取り除く。名前が変わると
-            // アップロードのたびに別ファイルとして増え、差分も消えないので、
-            // 送る前に止めてリネームしてもらう。
-            let sanitized = sanitized_file_name(name);
-            if sanitized != name {
-                bail!(
-                    "テストケース名 {}/{name} は yukicoder では {} になります \
-                     (使えるのは A-Za-z0-9._ だけ)。ファイル名を変更してください。",
-                    which,
-                    if sanitized.is_empty() {
-                        "空の名前".to_string()
-                    } else {
-                        sanitized
-                    }
-                );
-            }
             cases.insert(name.to_string(), read_bytes(&path)?);
         }
         Ok(cases)
@@ -556,14 +540,29 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// サーバがファイル名から `A-Za-z0-9._` 以外を取り除いた結果を返す。
+/// テストケース名を、サーバの規則 (`GET /v1/testcase_name_rule` が返す使える
+/// 文字の一覧) で検証する。
 ///
-/// アップロードした名前がそのまま保存されるとは限らない。例えば
-/// `case-01.txt` は `case01.txt` になる。
-pub fn sanitized_file_name(name: &str) -> String {
-    name.chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_')
-        .collect()
+/// 使えない文字はサーバが取り除いて別名で保存する。名前が変わるとアップロード
+/// のたびに別ファイルとして増え、差分も消えないので、送る前に止めてリネーム
+/// してもらう。規則の中身 (どの文字が使えるか) はクライアントに持たない。
+pub fn check_testcase_name(which: Which, name: &str, allowed_chars: &str) -> Result<()> {
+    let converted: String = name
+        .chars()
+        .filter(|c| allowed_chars.contains(*c))
+        .collect();
+    if converted == name {
+        return Ok(());
+    }
+    bail!(
+        "テストケース名 {which}/{name} は yukicoder では {} になります。\
+         ファイル名を変更してください。",
+        if converted.is_empty() {
+            "空の名前".to_string()
+        } else {
+            converted
+        }
+    );
 }
 
 /// 出力用にパスを短くする。
@@ -719,11 +718,19 @@ mod tests {
         assert!(relative_from(Path::new("relative/path"), base).is_none());
     }
 
-    /// ファイル名は A-Za-z0-9._ 以外が落ちる。
+    /// ファイル名の検証はサーバの規則 (使える文字の一覧) を受け取って行う。
+    /// 規則の中身はクライアントに持たない。
     #[test]
-    fn file_names_lose_unsupported_characters() {
-        assert_eq!(sanitized_file_name("1_sample_1.txt"), "1_sample_1.txt");
-        assert_eq!(sanitized_file_name("case-01.txt"), "case01.txt");
-        assert_eq!(sanitized_file_name("テスト 1.txt"), "1.txt");
+    fn testcase_names_are_checked_against_the_server_rule() {
+        let allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-0123456789";
+        assert!(check_testcase_name(Which::In, "1_sample_1.txt", allowed).is_ok());
+        assert!(
+            check_testcase_name(Which::In, "case-01.txt", allowed).is_ok(),
+            "規則に入っている文字はそのまま使える"
+        );
+        let err = check_testcase_name(Which::In, "case 1.txt", allowed).unwrap_err();
+        assert!(err.to_string().contains("case1.txt"), "{err}");
+        let err = check_testcase_name(Which::In, "テスト", allowed).unwrap_err();
+        assert!(err.to_string().contains("空の名前"), "{err}");
     }
 }

@@ -92,16 +92,17 @@ impl Part {
 /// reqwest の multipart はストリームとして送られるため、gzip を掛けるには
 /// 自分でバイト列を作る必要がある。
 ///
-/// ファイル名は `A-Za-z0-9._` だけを許す (サーバが保存時に他の文字を落とすため、
-/// それ以外は呼び出し元で弾いている)。この制限のおかげで、ファイル名の
-/// エスケープを考えなくてよい。
+/// ファイル名は `Content-Disposition` ヘッダに引用符で埋め込むので、ヘッダを
+/// 壊す文字 (引用符・バックスラッシュ・改行などの制御文字と、非 ASCII) は
+/// 弾く。これはサーバの命名規則の写しではなく、エスケープを不要にするための
+/// クライアント自身の安全条件 (命名規則の検証は呼び出し元が行う)。
 pub fn multipart(parts: &[Part]) -> Result<(String, Vec<u8>)> {
     for part in parts {
         if let Part::File { filename, .. } = part {
             if filename.is_empty()
                 || !filename
                     .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
+                    .all(|c| c.is_ascii_graphic() && c != '"' && c != '\\')
             {
                 bail!("multipart に使えないファイル名です: {filename}");
             }
@@ -256,10 +257,17 @@ mod tests {
         );
     }
 
-    /// サーバに落とされる文字を含む名前は、ここまで来てはいけない。
+    /// ファイル名は Content-Disposition ヘッダに引用符で埋め込むので、
+    /// ヘッダを壊す文字だけを弾く (命名規則の検証は呼び出し元の仕事)。
     #[test]
-    fn rejects_names_the_server_would_rewrite() {
-        let parts = vec![Part::file("newfiles", "case-01.txt", b"a".to_vec())];
-        assert!(multipart(&parts).is_err());
+    fn rejects_names_that_break_the_header() {
+        for ok in ["case-01.txt", "1_sample.txt"] {
+            let parts = vec![Part::file("newfiles", ok, b"a".to_vec())];
+            assert!(multipart(&parts).is_ok(), "{ok}");
+        }
+        for bad in ["a\"b.txt", "a\\b.txt", "a\r\nb.txt", "テスト.txt", ""] {
+            let parts = vec![Part::file("newfiles", bad, b"a".to_vec())];
+            assert!(multipart(&parts).is_err(), "{bad:?}");
+        }
     }
 }

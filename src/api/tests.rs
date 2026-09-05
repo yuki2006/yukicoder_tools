@@ -175,14 +175,25 @@ fn testcase_listing_is_parsed_with_hashes() {
     server.join().unwrap();
 }
 
+/// テストケース名の規則 (使える文字の一覧) はサーバから取得する。
+#[test]
+fn testcase_name_rule_is_fetched() {
+    let (base_url, server) = serve_once(200, r#"{"allowedChars":"abc-"}"#);
+    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+    assert_eq!(client.testcase_name_rule().unwrap(), "abc-");
+    server.join().unwrap();
+}
+
 /// サーバ由来のテストケース名も検証する。ローカルパスに join し URL にも
-/// 埋め込むので、'/' や '..' を通すと外に書いてしまう。
+/// 埋め込むので、'/' や '..' を通すと外に書いてしまう。これは命名規則の
+/// 写しではなく、クライアント自身の安全条件。
 #[test]
 fn testcase_names_from_the_server_are_validated() {
     for (payload, ok) in [
-        (r#"["1.txt","sample_1.txt"]"#, true),
+        (r#"["1.txt","sample_1.txt","case-01.txt"]"#, true),
         (r#"["../evil"]"#, false),
         (r#"["a/b.txt"]"#, false),
+        (r#"["c:evil"]"#, false),
         (r#"[""]"#, false),
     ] {
         let (base_url, server) = serve_once(200, payload);
