@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context as _, Result};
 
 use crate::api::models::{
-    judge_status_is_final, judging_ids, EditorialRequest, GeneratorRequest, JudgeCodeRequest,
-    ProblemEditRequest, SaveResponse, ValidatorRequest, Which, JUDGE_STATUS_OK,
+    judging_ids, EditorialRequest, GeneratorRequest, JudgeCodeRequest, ProblemEditRequest,
+    SaveResponse, ValidatorRequest, Which, JUDGE_STATUS_OK,
 };
 use crate::api::YukicoderClient;
 use crate::commands::Context;
@@ -190,26 +190,23 @@ fn push_judge_code(
         return Ok(());
     }
 
-    // 保存直後は WJ。コンパイルが終わると AC か CE になる。
-    let status = if judge_status_is_final(&res.status) {
-        Some(res.status.clone())
-    } else if options.wait_compile {
-        wait_for_compile(client, problem_id)?
-    } else {
-        None
-    };
+    if !options.wait_compile {
+        println!("  ジャッジコード: コンパイル結果は待ちません (--no-wait-compile)");
+        return Ok(());
+    }
 
-    match status {
-        Some(status) if status == JUDGE_STATUS_OK => {
-            println!("  ジャッジコード: コンパイル成功 ({status})");
+    // 保存直後は WJ。判定中 (judging 分類) を抜けるまで待つ。
+    let judging = judging_ids(&client.statuses()?);
+    match wait_for_compile(client, problem_id, &judging)? {
+        Some(code) if code.status == JUDGE_STATUS_OK => {
+            println!("  ジャッジコード: コンパイル成功 ({})", code.status);
         }
-        Some(status) => {
-            // コンパイルメッセージは保存レスポンスに無いので、取得し直す。
-            let message = client.get_judge_code(problem_id)?.compile_message;
-            let message = message.trim();
+        Some(code) => {
+            let message = code.compile_message.trim().to_string();
             bail!(
-                "ジャッジコードのコンパイルに失敗しました ({status})。\
+                "ジャッジコードのコンパイルに失敗しました ({})。\
                  https://yukicoder.me/problems/{problem_id}/edit で内容を確認してください。{}",
+                code.status,
                 if message.is_empty() {
                     String::new()
                 } else {
@@ -218,11 +215,10 @@ fn push_judge_code(
                 }
             )
         }
-        None if options.wait_compile => println!(
+        None => println!(
             "  ジャッジコード: {COMPILE_TIMEOUT:?} 待ってもコンパイルが終わりませんでした。\
              `yuki-tool pull` で後から確認してください。"
         ),
-        None => println!("  ジャッジコード: コンパイル結果は待ちません (--no-wait-compile)"),
     }
     Ok(())
 }
@@ -375,16 +371,18 @@ fn wait_for_validation(
     }
 }
 
-/// コンパイル状態が確定するまで待つ。時間切れなら `None`。
-///
-/// `WJ` と `Judge` は途中の状態なので、確定するまで待ち続ける。
-fn wait_for_compile(client: &YukicoderClient, problem_id: i64) -> Result<Option<String>> {
+/// コンパイル状態が判定中 (judging) を抜けるまで待つ。時間切れなら `None`。
+fn wait_for_compile(
+    client: &YukicoderClient,
+    problem_id: i64,
+    judging: &std::collections::HashSet<String>,
+) -> Result<Option<crate::api::models::JudgeCodeContent>> {
     let deadline = Instant::now() + COMPILE_TIMEOUT;
     loop {
         std::thread::sleep(COMPILE_POLL_INTERVAL);
         let code = client.get_judge_code(problem_id)?;
-        if judge_status_is_final(&code.status) {
-            return Ok(Some(code.status));
+        if !code.status.is_empty() && !judging.contains(code.status.as_str()) {
+            return Ok(Some(code));
         }
         if Instant::now() >= deadline {
             return Ok(None);
