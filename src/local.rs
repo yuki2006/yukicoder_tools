@@ -574,9 +574,42 @@ pub fn display_path(path: impl AsRef<Path>) -> String {
     let path = path.as_ref();
     let shortened = std::env::current_dir()
         .ok()
-        .and_then(|cwd| path.strip_prefix(cwd).ok().map(Path::to_path_buf))
+        .and_then(|cwd| relative_from(path, &cwd))
         .unwrap_or_else(|| path.to_path_buf());
-    shortened.display().to_string().replace('\\', "/")
+    let text = shortened.display().to_string().replace('\\', "/");
+    if text.is_empty() {
+        ".".to_string()
+    } else {
+        text
+    }
+}
+
+/// `base` から `path` への相対パスを組む (`..` を許す)。
+///
+/// サブディレクトリから実行したとき、ルート側のパスを絶対パスではなく
+/// `../..` 形式で表示するため。先頭 (ドライブなど) から食い違う場合は
+/// `..` で辿れないので `None`。
+fn relative_from(path: &Path, base: &Path) -> Option<PathBuf> {
+    let path_parts: Vec<_> = path.components().collect();
+    let base_parts: Vec<_> = base.components().collect();
+    let mut common = 0;
+    while common < path_parts.len()
+        && common < base_parts.len()
+        && path_parts[common] == base_parts[common]
+    {
+        common += 1;
+    }
+    if common == 0 {
+        return None;
+    }
+    let mut result = PathBuf::new();
+    for _ in common..base_parts.len() {
+        result.push("..");
+    }
+    for part in &path_parts[common..] {
+        result.push(part);
+    }
+    Some(result)
 }
 
 #[cfg(test)]
@@ -664,6 +697,26 @@ mod tests {
             sha256_hex(b"1 2 3\n"),
             "1def07dbe06eeb097aafec8a40329937cd20c93a83634b8221ea2b41a894310c"
         );
+    }
+
+    /// サブディレクトリから実行しても、ルート側のパスを絶対パスにしない。
+    #[test]
+    fn paths_outside_the_cwd_become_dotdot_relative() {
+        let base = Path::new("/repo/problems/13954");
+        assert_eq!(
+            relative_from(Path::new("/repo/problems/13954/statement.md"), base).unwrap(),
+            Path::new("statement.md")
+        );
+        assert_eq!(
+            relative_from(Path::new("/repo/problems/20000"), base).unwrap(),
+            Path::new("../20000")
+        );
+        assert_eq!(
+            relative_from(Path::new("/repo"), base).unwrap(),
+            Path::new("../..")
+        );
+        // 先頭から食い違うパス (Windows の別ドライブなど) は .. で辿れない。
+        assert!(relative_from(Path::new("relative/path"), base).is_none());
     }
 
     /// ファイル名は A-Za-z0-9._ 以外が落ちる。

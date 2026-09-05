@@ -3,9 +3,6 @@
 //! yukicoder で問題を作る (ID と編集トークンが発行される) と、サーバには
 //! テンプレートの問題文が入っている。それを取得したうえで、`pull` は作らない
 //! テストケースや想定解のディレクトリまで用意する。
-//!
-//! リポジトリがまだ無ければ (`yukicoder.toml` が見つからなければ)、カレント
-//! ディレクトリに作るところから始める。最初の 1 問も 2 問目以降も同じコマンド。
 
 use std::path::{Component, Path, PathBuf};
 
@@ -13,11 +10,12 @@ use anyhow::{bail, Context as _, Result};
 
 use crate::api::models::Which;
 use crate::commands::Context;
-use crate::config::{Config, Repo, CONFIG_FILE, DOTENV_FILE};
+use crate::config::{DOTENV_FILE, PROBLEMS_DIR};
 use crate::local::{display_path, ProblemDir};
 
 pub fn run(problem_id: i64, dir: Option<String>) -> Result<()> {
-    let ctx = discover_or_init()?;
+    let ctx = Context::discover()?;
+    warn_if_dotenv_untracked(&ctx.repo.root);
 
     // 同じ問題が既にあると push が競合する。
     if let Some(existing) = ctx
@@ -35,7 +33,7 @@ pub fn run(problem_id: i64, dir: Option<String>) -> Result<()> {
     let root = ctx
         .repo
         .root
-        .join(&ctx.repo.config.problems_dir)
+        .join(PROBLEMS_DIR)
         .join(relative_dir(dir, problem_id)?);
     if root.exists() {
         bail!(
@@ -65,29 +63,6 @@ pub fn run(problem_id: i64, dir: Option<String>) -> Result<()> {
         display_path(dir.root())
     );
     Ok(())
-}
-
-/// リポジトリを見つける。無ければカレントディレクトリに作る。
-///
-/// `yukicoder.toml` はリポジトリの目印としての設定ファイルで、管理対象の
-/// 一覧は持たない (問題ディレクトリの problem.toml が正)。なのでここで
-/// 作ってしまってよい。
-fn discover_or_init() -> Result<Context> {
-    if let Some(repo) = Repo::try_discover()? {
-        return Ok(Context { repo });
-    }
-    let cwd = std::env::current_dir().context("カレントディレクトリを取得できませんでした")?;
-    let repo = Repo {
-        root: cwd.clone(),
-        config: Config::default(),
-    };
-    repo.save()?;
-    println!(
-        "{} を書きました (ここをリポジトリのルートとして扱います)",
-        display_path(cwd.join(CONFIG_FILE))
-    );
-    warn_if_dotenv_untracked(&cwd);
-    Ok(Context { repo })
 }
 
 /// `.env` を置く場合は必ず `.gitignore` に入れる。トークンの流出を防ぐ。

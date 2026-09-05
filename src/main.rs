@@ -32,7 +32,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// 問題のディレクトリ一式を作る (リポジトリが無ければ yukicoder.toml も作る)
+    /// 問題のディレクトリ一式を作る (yukicoder で問題を作った直後に使う)
     New {
         /// 問題 ID
         problem_id: i64,

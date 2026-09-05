@@ -29,7 +29,7 @@ impl Context {
     /// 編集トークンは 1 つの問題にしか使えないので、問題ごとに作り直す。
     pub fn client(&self, problem_id: i64) -> Result<YukicoderClient> {
         let token = config::resolve_token(&self.repo.root, problem_id)?;
-        YukicoderClient::new(token, self.repo.config.base_url.clone())
+        YukicoderClient::new(token, crate::api::DEFAULT_BASE_URL)
     }
 
     pub fn problem_dir(&self, problem_id: i64) -> Result<ProblemDir> {
