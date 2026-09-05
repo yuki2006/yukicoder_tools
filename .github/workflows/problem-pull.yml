@@ -26,18 +26,15 @@ jobs:
       - uses: actions/checkout@v7
 
       # 問題データの無いリポジトリ (ツール本体だけを置く場合) では何もしない。
-      # git status / add のパスも yukicoder.toml の設定に合わせる。
       - name: 問題データがあるか確認する
         id: problems
         run: |
-          dir=$(sed -n 's/^problems_dir *= *"\(.*\)"/\1/p' yukicoder.toml)
-          dir=${dir:-problems}
-          echo "PROBLEMS_DIR=$dir" >> "$GITHUB_ENV"
-          if [ -d "$dir" ]; then
+          echo "PROBLEMS_DIR=problems" >> "$GITHUB_ENV"
+          if [ -d "problems" ]; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "問題データ ($dir/) が無いのでスキップします。" >> "$GITHUB_STEP_SUMMARY"
+            echo "問題データ (problems/) が無いのでスキップします。" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Rust をセットアップ

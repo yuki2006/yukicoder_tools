@@ -3,14 +3,9 @@
 use anyhow::Result;
 
 use crate::api::{YukicoderClient, DEFAULT_BASE_URL};
-use crate::config::Repo;
 
 pub fn run(include_disabled: bool) -> Result<()> {
-    // リポジトリの外でも使えるように、設定が無ければ既定の URL を使う。
-    let base_url = Repo::discover()
-        .map(|repo| repo.config.base_url)
-        .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
-    let client = YukicoderClient::anonymous(base_url)?;
+    let client = YukicoderClient::anonymous(DEFAULT_BASE_URL)?;
 
     for lang in client.languages()? {
         let enabled = lang.status.is_empty() || lang.status == "enable";

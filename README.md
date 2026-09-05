@@ -16,7 +16,7 @@ main にマージされた内容を GitHub Actions が yukicoder へ反映する
 
 | コマンド | 内容 |
 | --- | --- |
-| `yuki-tool new <問題ID> [--dir <名前>]` | 問題のディレクトリ一式を作る (取得 + testcases/ solutions/ の骨組み)。リポジトリが無ければ `yukicoder.toml` も作る |
+| `yuki-tool new <問題ID> [--dir <名前>]` | 問題のディレクトリ一式を作る (取得 + testcases/ solutions/ の骨組み) |
 | `yuki-tool pull [問題ID]` | yukicoder の内容をローカルに書き出す |
 | `yuki-tool diff [問題ID]` | ローカルと yukicoder の差分を表示する (`--exit-code` で差分時に終了コード 2) |
 | `yuki-tool push [問題ID]` | ローカルの内容を yukicoder に反映する (`--dry-run` / `--prune` / `--generate`) |
@@ -58,7 +58,7 @@ cargo build --release
 2. `YUKICODER_TOKEN`
 3. `YUKICODER_API_KEY` — アカウントの API キー。作者・テスターならどの問題にも使える
 
-それぞれ、環境変数を先に見て、無ければリポジトリ直下の `.env` を見ます
+それぞれ、環境変数を先に見て、無ければルート直下の `.env` を見ます
 (GitHub Actions の Secrets が `.env` より優先されます)。どれも無ければエラーで止まります。
 
 編集トークンは発行元の問題にしか使えないので、**複数の問題を扱うときは問題ごとに並べて書きます**。
@@ -80,7 +80,6 @@ GitHub Actions では Secrets に `YUKICODER_TOKEN` を登録し、ジョブの 
 ## ディレクトリ構成
 
 ```text
-yukicoder.toml              問題ディレクトリの場所 / API のベース URL
 problems/<好きな名前>/        どの問題かは problem.toml の problemId で決まる
   problem.toml              問題設定 (キー名は API と同じ camelCase)
   statement.md              問題文。HTML で管理する問題は statement.html
@@ -100,10 +99,13 @@ problems/<好きな名前>/        どの問題かは problem.toml の problemId
   solutions/                提出用のソース (同期対象ではない)
 ```
 
+- **ルートは `.git` のある場所です** (上に辿って探すので、リポジトリのどこから実行しても
+  同じ場所を指します)。Git 管理外で実行した場合はカレントディレクトリがルートになり、
+  その旨を表示します。`problems/` の場所と API の接続先は固定で、設定ファイルはありません。
 - `problemType` / `judgeType` / `epsMode` の値は API と同じ数値・記号のままですが、
   `pull` が意味を書いたコメントを添えます (例: `judgeType = 1 # 0:通常 1:スペシャル 2:リアクティブ`)。
 - **どの問題かは `problem.toml` の `problemId` で決まります。** ディレクトリ名は自由なので、
-  `problems/tutorial-dp/` や `problems/abc001/a/` のように置けます。`problems_dir` 以下を
+  `problems/tutorial-dp/` や `problems/abc001/a/` のように置けます。`problems/` 以下を
   降りて `problem.toml` を探すので、管理対象の一覧をどこかに書く必要はありません。
   同じ `problemId` が 2 か所にあるとエラーにします。
 - `problem.toml` に `sync = false` と書くと、`--all` の対象から外れます。トークンの

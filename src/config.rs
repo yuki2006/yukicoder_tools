@@ -1,56 +1,22 @@
-//! リポジトリ設定 (`yukicoder.toml`) と、トークンの解決。
+//! リポジトリ (ルートの決定) と、トークンの解決。
 //!
-//! トークンはコマンドライン引数では受け取らない。CI のログやプロセス一覧に
-//! 残らないよう、環境変数か `.env` からだけ読む。
+//! 設定ファイルは持たない。問題の置き場所は `problems/` 固定、接続先は
+//! 本番 yukicoder 固定で、管理対象の一覧は問題ディレクトリの `problem.toml`
+//! が正。トークンはコマンドライン引数では受け取らない。CI のログや
+//! プロセス一覧に残らないよう、環境変数か `.env` からだけ読む。
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use serde::{Deserialize, Serialize};
 
-use crate::api::DEFAULT_BASE_URL;
 use crate::local::display_path;
 
-pub const CONFIG_FILE: &str = "yukicoder.toml";
 pub const DOTENV_FILE: &str = ".env";
 
-/// リポジトリ直下の `yukicoder.toml`。
-///
-/// 管理対象の問題は、ここには書かない。`problems_dir` 以下の `problem.toml` を
-/// 探し、その `problemId` で決まる。一覧を二重に持つと、ディレクトリを増やした
-/// ときに片方だけ更新して食い違う。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Config {
-    /// 問題ディレクトリを置く場所。既定は `problems`。
-    ///
-    /// 全キーに既定値があるので、キーを打ち間違えると黙って既定値が使われて
-    /// しまう。それを防ぐため未知のキーはエラーにする (`deny_unknown_fields`)。
-    #[serde(default = "default_problems_dir")]
-    pub problems_dir: String,
-    /// API のベース URL。既定は `https://yukicoder.me/api`。
-    #[serde(default = "default_base_url")]
-    pub base_url: String,
-}
-
-fn default_problems_dir() -> String {
-    "problems".to_string()
-}
-
-fn default_base_url() -> String {
-    DEFAULT_BASE_URL.to_string()
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            problems_dir: default_problems_dir(),
-            base_url: default_base_url(),
-        }
-    }
-}
+/// 問題ディレクトリを置く場所 (ルートからの相対、固定)。
+pub const PROBLEMS_DIR: &str = "problems";
 
 /// リポジトリの中で見つかった 1 つの問題。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,70 +27,36 @@ pub struct Problem {
     pub sync: bool,
 }
 
-/// 設定ファイルと、それが置かれているディレクトリ。
+/// リポジトリのルート。
 #[derive(Debug, Clone)]
 pub struct Repo {
     pub root: PathBuf,
-    pub config: Config,
 }
 
 impl Repo {
-    /// カレントディレクトリから上に向かって `yukicoder.toml` を探す。
-    pub fn discover() -> Result<Self> {
-        match Self::try_discover()? {
-            Some(repo) => Ok(repo),
-            None => bail!(
-                "{CONFIG_FILE} が見つかりません。`yuki-tool new <問題ID>` で作成してください。"
-            ),
-        }
-    }
-
-    /// カレントディレクトリから上に向かって `yukicoder.toml` を探す。
-    /// 見つからなければ `None` (`new` が新しく作るかどうかを決める用)。
+    /// ルートを決める。`.git` が見つかればそこ、無ければカレントディレクトリ。
     ///
-    /// ファイルはあるのに読めない場合はエラー。壊れた設定を「無い」と同一視
-    /// すると、既存のリポジトリの中に別の設定を作ってしまう。
-    pub fn try_discover() -> Result<Option<Self>> {
+    /// `.git` を目印にするので、リポジトリのどこから実行しても同じ結果になる。
+    /// Git 管理外での一時的な使用も止めない (その場合は実行場所がルート)。
+    pub fn discover() -> Result<Self> {
         let cwd = std::env::current_dir().context("カレントディレクトリを取得できませんでした")?;
-        let mut dir = cwd.as_path();
-        loop {
-            let candidate = dir.join(CONFIG_FILE);
-            if candidate.is_file() {
-                return Self::load(dir).map(Some);
+        let root = match find_git_root(&cwd) {
+            Some(root) => root,
+            None => {
+                println!("カレントディレクトリをルートとして扱います (.git が見つかりません)");
+                cwd
             }
-            match dir.parent() {
-                Some(parent) => dir = parent,
-                None => return Ok(None),
-            }
-        }
-    }
-
-    pub fn load(root: &Path) -> Result<Self> {
-        let path = root.join(CONFIG_FILE);
-        let text = fs::read_to_string(&path)
-            .with_context(|| format!("{} を読めませんでした", display_path(&path)))?;
-        let config: Config = toml::from_str(&text)
-            .with_context(|| format!("{} を解釈できませんでした", display_path(&path)))?;
-        Ok(Self {
-            root: root.to_path_buf(),
-            config,
-        })
-    }
-
-    pub fn save(&self) -> Result<()> {
-        let path = self.root.join(CONFIG_FILE);
-        let text =
-            toml::to_string_pretty(&self.config).context("設定を TOML に変換できませんでした")?;
-        crate::local::write_text(&path, &text)
+        };
+        Ok(Self { root })
     }
 
     /// リポジトリの中の問題をすべて見つける。
     ///
-    /// `problems_dir` 以下を降りて `problem.toml` を探し、その `problemId` を読む。
+    /// `problems/` 以下を降りて `problem.toml` を探し、その `problemId` を読む。
     /// ディレクトリ名は問題 ID でなくてよい (`contests/abc001/a` のような置き方が
     /// できる)。`problemId` が無い古い形式は、ディレクトリ名が数値ならそれを使う。
     pub fn problems(&self) -> Result<Vec<Problem>> {
-        let base = self.root.join(&self.config.problems_dir);
+        let base = self.root.join(PROBLEMS_DIR);
         let mut found = Vec::new();
         collect_problems(&base, &mut found)?;
         found.sort_by_key(|p| p.id);
@@ -143,16 +75,13 @@ impl Repo {
 
     /// 問題 ID からディレクトリを決める。
     ///
-    /// 見つからなければ `<problems_dir>/<問題ID>` を使う (`new` や、まだ
+    /// 見つからなければ `problems/<問題ID>` を使う (`new` や、まだ
     /// リポジトリに無い問題の `pull` 用)。
     pub fn problem_dir(&self, problem_id: i64) -> Result<PathBuf> {
         if let Some(problem) = self.problems()?.into_iter().find(|p| p.id == problem_id) {
             return Ok(problem.dir);
         }
-        let fallback = self
-            .root
-            .join(&self.config.problems_dir)
-            .join(problem_id.to_string());
+        let fallback = self.root.join(PROBLEMS_DIR).join(problem_id.to_string());
         // ここまで来たのは、この ID の問題がリポジトリに無いから。それでも
         // 既定の場所に problem.toml があるなら、そこは別の問題のディレクトリで、
         // 書き込むと壊してしまう (problems/ は gitignore 済みで復元もできない)。
@@ -188,7 +117,7 @@ impl Repo {
             if problems.is_empty() {
                 bail!(
                     "{} に問題がありません",
-                    crate::local::display_path(self.root.join(&self.config.problems_dir))
+                    crate::local::display_path(self.root.join(PROBLEMS_DIR))
                 );
             }
             let (active, skipped): (Vec<_>, Vec<_>) = problems.into_iter().partition(|p| p.sync);
@@ -214,6 +143,20 @@ impl Repo {
                 "対象の問題 ID を指定してください (--all ですべて、または問題 ID を 1 つ指定)"
             ),
         }
+    }
+}
+
+/// `start` から上に向かって `.git` を探し、見つかったディレクトリを返す。
+///
+/// worktree や submodule では `.git` はディレクトリではなくファイルなので、
+/// 種類は問わない。
+fn find_git_root(start: &Path) -> Option<PathBuf> {
+    let mut dir = start;
+    loop {
+        if dir.join(".git").exists() {
+            return Some(dir.to_path_buf());
+        }
+        dir = dir.parent()?;
     }
 }
 
@@ -522,6 +465,25 @@ mod tests {
         )
     }
 
+    /// ルートは `.git` のある場所。サブディレクトリから実行しても同じ場所に
+    /// なる。worktree では `.git` はファイルなので、それでも見つかること。
+    #[test]
+    fn git_root_is_found_from_subdirectories() {
+        let root = temp_dir("git-root");
+        let _ = fs::remove_dir_all(&root);
+        let nested = root.join("problems").join("13954");
+        fs::create_dir_all(&nested).unwrap();
+
+        fs::create_dir_all(root.join(".git")).unwrap();
+        assert_eq!(find_git_root(&nested).unwrap(), root);
+
+        let worktree = temp_dir("git-file");
+        let _ = fs::remove_dir_all(&worktree);
+        fs::create_dir_all(&worktree).unwrap();
+        fs::write(worktree.join(".git"), "gitdir: elsewhere").unwrap();
+        assert_eq!(find_git_root(&worktree).unwrap(), worktree);
+    }
+
     fn repo_with(problems: &[(&str, Option<i64>)], tag: &str) -> Repo {
         let root = temp_dir(tag);
         let _ = fs::remove_dir_all(&root);
@@ -531,10 +493,7 @@ mod tests {
             fs::write(dir.join("problem.toml"), problem_toml(*id)).unwrap();
         }
         fs::create_dir_all(root.join("problems")).unwrap();
-        Repo {
-            root,
-            config: Config::default(),
-        }
+        Repo { root }
     }
 
     /// ディレクトリ名は自由で、problemId が問題を決める。
@@ -644,12 +603,5 @@ mod tests {
         let repo = repo_with(&[("100", Some(200))], "claimed");
         assert!(repo.problem_dir(100).is_err());
         assert!(repo.problem_dir(200).unwrap().ends_with("100"));
-    }
-
-    /// キーの打ち間違いを黙って既定値にしない。
-    #[test]
-    fn unknown_config_keys_are_rejected() {
-        assert!(toml::from_str::<Config>("problem_dir = \"contests\"").is_err());
-        assert!(toml::from_str::<Config>("problems_dir = \"contests\"").is_ok());
     }
 }
