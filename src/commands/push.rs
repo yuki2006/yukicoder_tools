@@ -13,7 +13,7 @@ use crate::api::models::{
 };
 use crate::api::YukicoderClient;
 use crate::commands::Context;
-use crate::local::{display_path, sha256_hex, ProblemDir};
+use crate::local::{check_testcase_name, display_path, sha256_hex, ProblemDir};
 use crate::Target;
 
 #[derive(Debug, Clone, Copy)]
@@ -117,8 +117,10 @@ fn push_one(client: &YukicoderClient, dir: &ProblemDir, options: Options) -> Res
     // ---- テストケース ----
     let mut testcases_changed = false;
     if options.testcases {
+        // 名前の規則 (使える文字) はサーバに問い合わせる。
+        let allowed_chars = client.testcase_name_rule()?;
         for which in [Which::In, Which::Out] {
-            testcases_changed |= push_testcases(client, dir, which, options)?;
+            testcases_changed |= push_testcases(client, dir, which, &allowed_chars, options)?;
         }
     }
 
@@ -396,10 +398,14 @@ fn push_testcases(
     client: &YukicoderClient,
     dir: &ProblemDir,
     which: Which,
+    allowed_chars: &str,
     options: Options,
 ) -> Result<bool> {
     let problem_id = dir.problem_id();
     let local = dir.read_testcases(which)?;
+    for name in local.keys() {
+        check_testcase_name(which, name, allowed_chars)?;
+    }
     let details = client.list_testcases_detail(problem_id, which)?;
     let remote_names: Vec<&str> = details.iter().map(|d| d.name.as_str()).collect();
 

@@ -471,6 +471,16 @@ pub struct Language {
     pub status: String,
 }
 
+/// `GET /v1/testcase_name_rule` のレスポンス。
+///
+/// テストケース名に使える文字の一覧。サーバのサニタイズ実装が使う定義
+/// そのもので、規則の中身はクライアントに持たない。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestcaseNameRule {
+    pub allowed_chars: String,
+}
+
 /// `GET /file/{which}?detail=1` の要素。
 ///
 /// `sha256` は保存されているバイト列 (正規化後) に対する値なので、そのまま

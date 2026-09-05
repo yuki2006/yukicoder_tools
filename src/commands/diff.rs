@@ -116,17 +116,26 @@ fn diff_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> Resu
     }
 
     if testcases {
+        let allowed_chars = client.testcase_name_rule()?;
         for which in [Which::In, Which::Out] {
-            differs |= diff_testcases(client, dir, which)?;
+            differs |= diff_testcases(client, dir, which, &allowed_chars)?;
         }
     }
 
     Ok(differs)
 }
 
-fn diff_testcases(client: &YukicoderClient, dir: &ProblemDir, which: Which) -> Result<bool> {
+fn diff_testcases(
+    client: &YukicoderClient,
+    dir: &ProblemDir,
+    which: Which,
+    allowed_chars: &str,
+) -> Result<bool> {
     let problem_id = dir.problem_id();
     let local = dir.read_testcases(which)?;
+    for name in local.keys() {
+        crate::local::check_testcase_name(which, name, allowed_chars)?;
+    }
     let details = client.list_testcases_detail(problem_id, which)?;
     let mut differs = false;
 
