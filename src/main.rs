@@ -89,6 +89,9 @@ enum Command {
         /// 言語 ID (`yuki-tool languages` で確認)
         #[arg(short, long)]
         lang: String,
+        /// ジャッジの結果を待たない
+        #[arg(long)]
+        no_wait: bool,
     },
     /// 提出を解説ページの「想定解」として登録する / 登録を消す
     Solution {
@@ -171,7 +174,8 @@ fn run() -> Result<()> {
             problem_id,
             file,
             lang,
-        } => commands::submit::run(problem_id, &file, &lang),
+            no_wait,
+        } => commands::submit::run(problem_id, &file, &lang, !no_wait),
         Command::Solution {
             submission_id,
             summary,

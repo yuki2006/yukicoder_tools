@@ -404,6 +404,13 @@ impl YukicoderClient {
             .context("提出のレスポンスを読めませんでした")
     }
 
+    /// 提出の状態を取得する。
+    ///
+    /// 問題の編集トークンなら、その問題への提出だけが読める。
+    pub fn get_submission(&self, submission_id: i64) -> Result<models::SubmissionInfo> {
+        self.get_json(&format!("/v1/submissions/{submission_id}"), "提出の取得")
+    }
+
     /// AC した提出を解説ページの「想定解」一覧に登録する / 登録を消す。
     pub fn set_solution(&self, submission_id: i64, req: &SolutionRequest) -> Result<SaveResponse> {
         self.put_json(

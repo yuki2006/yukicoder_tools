@@ -20,7 +20,7 @@ main にマージされた内容を GitHub Actions が yukicoder へ反映する
 | `yuki-tool pull [問題ID]` | yukicoder の内容をローカルに書き出す |
 | `yuki-tool diff [問題ID]` | ローカルと yukicoder の差分を表示する (`--exit-code` で差分時に終了コード 2) |
 | `yuki-tool push [問題ID]` | ローカルの内容を yukicoder に反映する (`--dry-run` / `--prune` / `--generate`) |
-| `yuki-tool submit --file <ファイル> --lang <言語ID>` | ソースを提出する |
+| `yuki-tool submit --file <ファイル> --lang <言語ID>` | ソースを提出し、ジャッジの結果を待つ (`--no-wait` で待たない) |
 | `yuki-tool solution <提出ID> --summary "..."` | AC した提出を解説ページの「想定解」に登録する (`--delete` で解除) |
 | `yuki-tool testcases` | yukicoder 側のテストケース一覧を表示する |
 | `yuki-tool languages` | 提出・ジェネレータで使う言語 ID の一覧 |
@@ -213,7 +213,11 @@ WebUI で編集した内容を取り込む手段は 2 つ用意しています�
   複数まとめて送ります。ハンドラが読むフォーム名はこれだけです。
   1 件ずつ送る `POST /file/{in|out}/{FileName}` はルートが存在せず 404 になります
   (同じパスの GET / DELETE は使えます)。
-- `eps` は API が文字列でも数値でも返すため、どちらも受け取って文字列として保持します。
+- `eps` は文字列として送受信します (数値で送るとサーバがエラーにします。浮動小数の丸めを
+  避けるため)。
+- 提出後は `GET /v1/submissions/{id}` でジャッジの結果を待ちます。この API は問題の
+  編集トークン (その問題への提出のみ) か、サイトサポーターのアカウント API キーで
+  読めます。終了判定は `/v1/statuses` の judging 分類です。
 - リクエストは 1KB 以上なら gzip して送ります (`Content-Encoding: gzip`)。JSON も multipart も
   対象です。レスポンスの gzip も受け取ります。
 - validator の非終端 (実行中・実行待ち) の判定は、`GET /v1/statuses` が返す

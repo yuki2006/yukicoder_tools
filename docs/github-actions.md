@@ -148,9 +148,12 @@ sourceFile = "judge.cpp"
 ```sh
 yuki-tool submit --file problems/13954/solutions/main.cpp --lang cpp23
 # 提出しました: 提出 ID 1181846
-# AC を確認してから
+# ジャッジを待っています...
+# 結果: AC (91 ms)
 yuki-tool solution 1181846 --summary "想定解 O(N log N)"
 ```
+
+ジャッジの結果まで表示して終わります (`--no-wait` で待たずに終われます)。
 
 ## つまずきやすいところ
 

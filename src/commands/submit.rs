@@ -1,14 +1,16 @@
 //! `yuki-tool submit` / `yuki-tool solution` — 提出と、想定解の登録。
 
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 
-use crate::api::models::SolutionRequest;
+use crate::api::models::{judging_ids, SolutionRequest};
+use crate::api::YukicoderClient;
 use crate::commands::Context;
 use crate::local::{display_path, read_text};
 
-pub fn run(problem_id: Option<i64>, file: &Path, lang: &str) -> Result<()> {
+pub fn run(problem_id: Option<i64>, file: &Path, lang: &str, wait: bool) -> Result<()> {
     let ctx = Context::discover()?;
     let problem_id = single(&ctx, problem_id)?;
     let source = read_text(file)?;
@@ -25,15 +27,54 @@ pub fn run(problem_id: Option<i64>, file: &Path, lang: &str) -> Result<()> {
     let response = client.submit(problem_id, lang, source)?;
     let response = response.trim();
 
-    match submission_id(response) {
-        Some(id) => println!(
-            "提出しました: 提出 ID {id}\n結果は https://yukicoder.me/submissions/{id} で確認できます。\n\
-             AC を確認したら `yuki-tool solution {id} --summary \"...\"` で想定解に登録できます。"
-        ),
-        None => println!("提出しました。レスポンス: {response}"),
+    let Some(id) = submission_id(response) else {
+        println!("提出しました。レスポンス: {response}");
+        return Ok(());
+    };
+    println!(
+        "提出しました: 提出 ID {id}\n結果は https://yukicoder.me/submissions/{id} で確認できます。"
+    );
+
+    if wait {
+        match wait_for_judge(&client, id)? {
+            Some(result) => println!(
+                "結果: {} ({} ms)\nAC なら `yuki-tool solution {id} --summary \"...\"` で想定解に登録できます。",
+                result.status, result.run_time_ms
+            ),
+            None => println!(
+                "{JUDGE_TIMEOUT:?} 待ってもジャッジが終わりませんでした。\
+                 結果は提出ページで確認してください。"
+            ),
+        }
     }
     Ok(())
 }
+
+/// ジャッジが終わるまで待つ。時間切れなら `None`。
+///
+/// 判定は `/v1/statuses` の judging 分類 (実行中・実行待ち) を抜けたかどうか。
+fn wait_for_judge(
+    client: &YukicoderClient,
+    submission_id: i64,
+) -> Result<Option<crate::api::models::SubmissionInfo>> {
+    let judging = judging_ids(&client.statuses()?);
+    let deadline = Instant::now() + JUDGE_TIMEOUT;
+    println!("ジャッジを待っています...");
+    loop {
+        std::thread::sleep(JUDGE_POLL_INTERVAL);
+        let submission = client.get_submission(submission_id)?;
+        if !submission.status.is_empty() && !judging.contains(submission.status.as_str()) {
+            return Ok(Some(submission));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+    }
+}
+
+/// ジャッジを待つ時間。混んでいるときのキュー待ちも含む。
+const JUDGE_TIMEOUT: Duration = Duration::from_secs(600);
+const JUDGE_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 pub fn set_solution(
     submission_id: i64,

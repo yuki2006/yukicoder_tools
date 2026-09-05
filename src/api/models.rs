@@ -471,6 +471,22 @@ pub struct Language {
     pub status: String,
 }
 
+/// `GET /v1/submissions/{id}` のレスポンス。
+///
+/// 提出の状態。読むのは結果の表示に使うフィールドだけ。
+/// 認証は問題の編集トークン (その問題への提出のみ) か、
+/// サイトサポーターのアカウント API キー。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmissionInfo {
+    /// ジャッジ状態。語彙と分類は `GET /v1/statuses` が正 ([`judging_ids`])。
+    #[serde(default)]
+    pub status: String,
+    /// ミリ秒。
+    #[serde(default)]
+    pub run_time_ms: i64,
+}
+
 /// `GET /v1/testcase_name_rule` のレスポンス。
 ///
 /// テストケース名に使える文字の一覧。サーバのサニタイズ実装が使う定義
