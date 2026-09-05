@@ -32,15 +32,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// yukicoder.toml を作り、問題を取得する
-    Init {
-        /// 問題 ID
-        problem_id: i64,
-        /// テストケースは取得しない
-        #[arg(long)]
-        no_testcases: bool,
-    },
-    /// 問題のディレクトリ一式を作る (yukicoder で問題を作った直後に使う)
+    /// 問題のディレクトリ一式を作る (リポジトリが無ければ yukicoder.toml も作る)
     New {
         /// 問題 ID
         problem_id: i64,
@@ -148,10 +140,6 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Init {
-            problem_id,
-            no_testcases,
-        } => commands::init::run(problem_id, !no_testcases),
         Command::New { problem_id, dir } => commands::new::run(problem_id, dir),
         Command::Pull {
             target,

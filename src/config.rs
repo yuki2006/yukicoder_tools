@@ -71,18 +71,30 @@ pub struct Repo {
 impl Repo {
     /// カレントディレクトリから上に向かって `yukicoder.toml` を探す。
     pub fn discover() -> Result<Self> {
+        match Self::try_discover()? {
+            Some(repo) => Ok(repo),
+            None => bail!(
+                "{CONFIG_FILE} が見つかりません。`yuki-tool new <問題ID>` で作成してください。"
+            ),
+        }
+    }
+
+    /// カレントディレクトリから上に向かって `yukicoder.toml` を探す。
+    /// 見つからなければ `None` (`new` が新しく作るかどうかを決める用)。
+    ///
+    /// ファイルはあるのに読めない場合はエラー。壊れた設定を「無い」と同一視
+    /// すると、既存のリポジトリの中に別の設定を作ってしまう。
+    pub fn try_discover() -> Result<Option<Self>> {
         let cwd = std::env::current_dir().context("カレントディレクトリを取得できませんでした")?;
         let mut dir = cwd.as_path();
         loop {
             let candidate = dir.join(CONFIG_FILE);
             if candidate.is_file() {
-                return Self::load(dir);
+                return Self::load(dir).map(Some);
             }
             match dir.parent() {
                 Some(parent) => dir = parent,
-                None => bail!(
-                    "{CONFIG_FILE} が見つかりません。`yuki-tool init <問題ID>` で作成してください。"
-                ),
+                None => return Ok(None),
             }
         }
     }
@@ -131,7 +143,7 @@ impl Repo {
 
     /// 問題 ID からディレクトリを決める。
     ///
-    /// 見つからなければ `<problems_dir>/<問題ID>` を使う (`init` や、まだ
+    /// 見つからなければ `<problems_dir>/<問題ID>` を使う (`new` や、まだ
     /// リポジトリに無い問題の `pull` 用)。
     pub fn problem_dir(&self, problem_id: i64) -> Result<PathBuf> {
         if let Some(problem) = self.problems()?.into_iter().find(|p| p.id == problem_id) {
@@ -196,7 +208,7 @@ impl Repo {
                 only.id
             ),
             [] => {
-                bail!("対象の問題 ID を指定してください (`yuki-tool init <問題ID>` で取得できます)")
+                bail!("対象の問題 ID を指定してください (`yuki-tool new <問題ID>` で取得できます)")
             }
             _ => bail!(
                 "対象の問題 ID を指定してください (--all ですべて、または問題 ID を 1 つ指定)"
@@ -616,7 +628,7 @@ mod tests {
         );
     }
 
-    /// リポジトリにまだ無い問題は、既定の場所を使う (init / pull 用)。
+    /// リポジトリにまだ無い問題は、既定の場所を使う (new / pull 用)。
     #[test]
     fn unknown_problems_fall_back_to_the_default_directory() {
         let repo = repo_with(&[], "unknown");

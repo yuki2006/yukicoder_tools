@@ -3,17 +3,21 @@
 //! yukicoder で問題を作る (ID と編集トークンが発行される) と、サーバには
 //! テンプレートの問題文が入っている。それを取得したうえで、`pull` は作らない
 //! テストケースや想定解のディレクトリまで用意する。
+//!
+//! リポジトリがまだ無ければ (`yukicoder.toml` が見つからなければ)、カレント
+//! ディレクトリに作るところから始める。最初の 1 問も 2 問目以降も同じコマンド。
 
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, Context as _, Result};
 
 use crate::api::models::Which;
 use crate::commands::Context;
+use crate::config::{Config, Repo, CONFIG_FILE, DOTENV_FILE};
 use crate::local::{display_path, ProblemDir};
 
 pub fn run(problem_id: i64, dir: Option<String>) -> Result<()> {
-    let ctx = Context::discover()?;
+    let ctx = discover_or_init()?;
 
     // 同じ問題が既にあると push が競合する。
     if let Some(existing) = ctx
@@ -61,6 +65,44 @@ pub fn run(problem_id: i64, dir: Option<String>) -> Result<()> {
         display_path(dir.root())
     );
     Ok(())
+}
+
+/// リポジトリを見つける。無ければカレントディレクトリに作る。
+///
+/// `yukicoder.toml` はリポジトリの目印としての設定ファイルで、管理対象の
+/// 一覧は持たない (問題ディレクトリの problem.toml が正)。なのでここで
+/// 作ってしまってよい。
+fn discover_or_init() -> Result<Context> {
+    if let Some(repo) = Repo::try_discover()? {
+        return Ok(Context { repo });
+    }
+    let cwd = std::env::current_dir().context("カレントディレクトリを取得できませんでした")?;
+    let repo = Repo {
+        root: cwd.clone(),
+        config: Config::default(),
+    };
+    repo.save()?;
+    println!(
+        "{} を書きました (ここをリポジトリのルートとして扱います)",
+        display_path(cwd.join(CONFIG_FILE))
+    );
+    warn_if_dotenv_untracked(&cwd);
+    Ok(Context { repo })
+}
+
+/// `.env` を置く場合は必ず `.gitignore` に入れる。トークンの流出を防ぐ。
+fn warn_if_dotenv_untracked(root: &Path) {
+    let gitignore = root.join(".gitignore");
+    let ignored = std::fs::read_to_string(&gitignore)
+        .map(|text| text.lines().any(|line| line.trim() == DOTENV_FILE))
+        .unwrap_or(false);
+    if !ignored {
+        eprintln!(
+            "警告: {} に {DOTENV_FILE} がありません。トークンを {DOTENV_FILE} に置くなら、\
+             先に .gitignore へ追加してください。",
+            display_path(&gitignore)
+        );
+    }
 }
 
 /// `--dir` を problems_dir からの相対パスとして検証する。

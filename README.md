@@ -16,8 +16,7 @@ main にマージされた内容を GitHub Actions が yukicoder へ反映する
 
 | コマンド | 内容 |
 | --- | --- |
-| `yuki-tool init <問題ID>` | `yukicoder.toml` を作り、問題を取得する |
-| `yuki-tool new <問題ID> [--dir <名前>]` | 問題のディレクトリ一式を作る (取得 + testcases/ solutions/ の骨組み) |
+| `yuki-tool new <問題ID> [--dir <名前>]` | 問題のディレクトリ一式を作る (取得 + testcases/ solutions/ の骨組み)。リポジトリが無ければ `yukicoder.toml` も作る |
 | `yuki-tool pull [問題ID]` | yukicoder の内容をローカルに書き出す |
 | `yuki-tool diff [問題ID]` | ローカルと yukicoder の差分を表示する (`--exit-code` で差分時に終了コード 2) |
 | `yuki-tool push [問題ID]` | ローカルの内容を yukicoder に反映する (`--dry-run` / `--prune` / `--generate`) |
