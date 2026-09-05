@@ -233,7 +233,7 @@ pub struct JudgeCodeContent {
     pub lang_id: String,
     #[serde(default)]
     pub source: String,
-    /// コンパイル状態。保存直後は `WJ`、その後 `AC` か `CE` になる。
+    /// コンパイル状態。語彙と分類は `GET /v1/statuses` が正 ([`judging_ids`])。
     #[serde(default)]
     pub status: String,
     /// コンパイラ・システムからのメッセージ。先頭 2000 バイトで切れることが
@@ -252,28 +252,20 @@ pub struct JudgeCodeRequest {
 }
 
 /// `PUT /v1/problems/{id}/code` のレスポンス。
+///
+/// `status` も返る (保存で `WJ`、削除で空) が、待ちは GET のポーリングで
+/// 行うので読まない。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct JudgeCodeSaveResponse {
     #[serde(default, rename = "Message")]
     pub message: String,
-    /// 保存直後は `WJ`。削除したときは空。
-    #[serde(default)]
-    pub status: String,
 }
 
-/// ジャッジコードのコンパイルが通った状態。
-pub const JUDGE_STATUS_OK: &str = "AC";
-/// ジャッジコードのコンパイルに失敗した状態。
-pub const JUDGE_STATUS_COMPILE_ERROR: &str = "CE";
-
-/// コンパイル状態が確定しているか。
+/// 成功を表すジャッジ状態。
 ///
-/// 確定するのは `AC` と `CE` だけ。`WJ` (待機) と `Judge` (コンパイル中) は
-/// 途中の状態で、空文字列は未登録。**確定していない値を失敗として扱わないこと。**
-/// `WJ` → `Judge` → `AC` と遷移する。
-pub fn judge_status_is_final(status: &str) -> bool {
-    status == JUDGE_STATUS_OK || status == JUDGE_STATUS_COMPILE_ERROR
-}
+/// 待ちの終了判定は `/v1/statuses` の judging 分類で行い ([`judging_ids`])、
+/// 成否の判定にだけこの値を使う。
+pub const JUDGE_STATUS_OK: &str = "AC";
 
 /// `GET /v1/problems/{id}/validator` のレスポンス。
 ///
@@ -592,21 +584,6 @@ mod tests {
         }
         // 設定は flatten されて同じ階層に出る。
         assert_eq!(json["timeLimitMs"], 2000);
-    }
-
-    /// ジャッジコードのコンパイル状態は `WJ` → `Judge` → `AC` と遷移する。
-    /// 途中の `Judge` を確定扱いすると、コンパイルが通っているのに失敗として
-    /// 報告してしまう。
-    #[test]
-    fn only_ac_and_ce_are_final_judge_statuses() {
-        assert!(judge_status_is_final("AC"));
-        assert!(judge_status_is_final("CE"));
-        for in_progress in ["WJ", "Judge", "", "Compiling"] {
-            assert!(
-                !judge_status_is_final(in_progress),
-                "{in_progress} を確定扱いしてはいけない"
-            );
-        }
     }
 
     /// validator の完了判定。非終端かどうかは `/v1/statuses` の judging 分類を
