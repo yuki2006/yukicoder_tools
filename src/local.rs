@@ -702,23 +702,21 @@ mod tests {
     /// サブディレクトリから実行しても、ルート側のパスを絶対パスにしない。
     #[test]
     fn paths_outside_the_cwd_become_dotdot_relative() {
-        let base = Path::new("C:\\repo\\problems\\13954");
+        let base = Path::new("/repo/problems/13954");
         assert_eq!(
-            relative_from(Path::new("C:\\repo\\problems\\13954\\statement.md"), base).unwrap(),
+            relative_from(Path::new("/repo/problems/13954/statement.md"), base).unwrap(),
             Path::new("statement.md")
         );
         assert_eq!(
-            relative_from(Path::new("C:\\repo\\problems\\20000"), base).unwrap(),
-            Path::new("..\\20000")
+            relative_from(Path::new("/repo/problems/20000"), base).unwrap(),
+            Path::new("../20000")
         );
         assert_eq!(
-            relative_from(Path::new("C:\\repo"), base).unwrap(),
-            Path::new("..\\..")
+            relative_from(Path::new("/repo"), base).unwrap(),
+            Path::new("../..")
         );
-        assert!(
-            relative_from(Path::new("D:\\other"), base).is_none(),
-            "別ドライブは .. で辿れない"
-        );
+        // 先頭から食い違うパス (Windows の別ドライブなど) は .. で辿れない。
+        assert!(relative_from(Path::new("relative/path"), base).is_none());
     }
 
     /// ファイル名は A-Za-z0-9._ 以外が落ちる。
