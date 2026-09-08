@@ -82,7 +82,7 @@ GitHub Actions では Secrets に `YUKICODER_TOKEN` を登録し、ジョブの 
 ```text
 problems/<好きな名前>/        どの問題かは problem.toml の problemId で決まる
   problem.toml              問題設定 (キー名は API と同じ camelCase)
-  subtask.toml              部分点 (サブタスク)。任意
+  subtask.json              部分点 (サブタスク)。任意。TOML なら subtask.toml
   statement.md              問題文。HTML で管理する問題は statement.html
   editorial.md              解説 (任意)。HTML なら editorial.html
   judge/
@@ -131,23 +131,32 @@ problems/<好きな名前>/        どの問題かは problem.toml の problemId
 
 ### 部分点 (サブタスク)
 
-`subtask.toml` があるときだけ同期します。キー名は `PUT /v1/problems/{id}/subtask` と同じです。
+`subtask.json` (または `subtask.toml`) があるときだけ同期します。両方あるとエラーです。
+JSON は `PUT /v1/problems/{id}/subtask` の本文と同じ形で、`pull` が新規に作るときは JSON です。
+
+```json
+{
+  "subtasks": [
+    { "name": "サンプル", "prefixes": ["01"], "score": 30 },
+    { "prefixes": ["02", "03"], "score": 70 }
+  ]
+}
+```
+
+TOML なら次の形です (キー名は同じ)。
 
 ```toml
 [[subtasks]]
-name = "サブタスク1"
+name = "サンプル"
 prefixes = ["01"]
 score = 30
-
-[[subtasks]]
-prefixes = ["02", "03"]
-score = 70
 ```
 
 - `prefixes` はテストケース名の最後の `_` より前を `_` で分割したトークンに一致させます
-  (例: `01_sample_01.txt` はトークン `01` / `sample` を持つ)。判定はサーバが行います。
+  (例: `01_sample_01.txt` はトークン `01` / `sample` を持つ)。判定はサーバが行い、
+  一致するテストケースが無いサブタスク (常に 0 点) があれば push が警告を表示します。
 - `score` は配点 (%) で、全サブタスクの合計を 100 にします (違うとサーバが 400 を返します)。
-- 設定を消すには `subtasks = []` にして push します。**ファイルを消しても設定は消しません**
+- 設定を消すには `subtasks` を空配列にして push します。**ファイルを消しても設定は消しません**
   (暗黙の削除をしないため)。
 
 ### スペシャルジャッジ (ジャッジコード)
