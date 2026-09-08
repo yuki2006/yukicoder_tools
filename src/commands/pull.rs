@@ -48,6 +48,20 @@ pub fn pull_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> 
         }
     );
 
+    // 部分点 (サブタスク)。未設定ならファイルを作らない。ローカルにファイルが
+    // あるときは、未設定でも subtasks = [] を書いてリモートの状態に揃える。
+    let subtasks = client.get_subtask(problem_id)?;
+    if !subtasks.subtasks.is_empty() || dir.has_subtask() {
+        dir.write_subtask(&subtasks)?;
+        println!(
+            "  サブタスク -> {} ({} 件)",
+            display_path(dir.subtask_path()),
+            subtasks.subtasks.len()
+        );
+    } else {
+        println!("  サブタスク: 未設定");
+    }
+
     // ジェネレータは未登録なら langId も source も空で返る。空のときは
     // ローカルにファイルを作らない。
     let generator = client.get_generator(problem_id)?;

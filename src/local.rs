@@ -3,6 +3,7 @@
 //! ```text
 //! problems/<問題ID>/
 //!   problem.toml            問題設定 (キー名は API と同じ)
+//!   subtask.toml            部分点 (サブタスク)。無ければ触らない
 //!   statement.md            問題文 (HTML で管理する問題は statement.html)
 //!   editorial.md            解説 (HTML なら editorial.html)。無ければ触らない
 //!   judge/
@@ -28,10 +29,12 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::api::models::{
-    ProblemSettings, Statement, Which, EPS_MODE_LABELS, JUDGE_TYPE_LABELS, PROBLEM_TYPE_LABELS,
+    ProblemSettings, Statement, SubtaskSet, Which, EPS_MODE_LABELS, JUDGE_TYPE_LABELS,
+    PROBLEM_TYPE_LABELS,
 };
 
 pub const SETTINGS_FILE: &str = "problem.toml";
+pub const SUBTASK_FILE: &str = "subtask.toml";
 pub const GENERATOR_CONFIG_FILE: &str = "generator.toml";
 pub const JUDGE_CONFIG_FILE: &str = "judge.toml";
 pub const VALIDATOR_CONFIG_FILE: &str = "validator.toml";
@@ -170,6 +173,37 @@ impl ProblemDir {
             self.problem_id
         );
         write_text(&self.settings_path(), &text)
+    }
+
+    // ---- 部分点 (サブタスク) --------------------------------------------
+
+    pub fn subtask_path(&self) -> PathBuf {
+        self.root.join(SUBTASK_FILE)
+    }
+
+    pub fn has_subtask(&self) -> bool {
+        self.subtask_path().is_file()
+    }
+
+    /// `subtask.toml` を読む。`subtasks = []` は「設定を消す」の意味になる。
+    pub fn read_subtask(&self) -> Result<SubtaskSet> {
+        let path = self.subtask_path();
+        let text = read_text(&path)?;
+        toml::from_str(&text)
+            .with_context(|| format!("{} を解釈できませんでした", display_path(&path)))
+    }
+
+    pub fn write_subtask(&self, subtasks: &SubtaskSet) -> Result<()> {
+        let body =
+            toml::to_string_pretty(subtasks).context("サブタスクを TOML にできませんでした")?;
+        let text = format!(
+            "# 部分点 (サブタスク)。キー名は PUT /api/v1/problems/{{id}}/subtask と同じ。\n\
+             # prefixes はテストケース名の最後の _ より前を _ で分割したトークンに一致させる。\n\
+             # score は配点 (%) で、全サブタスクの合計を 100 にする。\n\
+             # subtasks = [] にして push すると設定を消す。\n\
+             {body}"
+        );
+        write_text(&self.subtask_path(), &text)
     }
 
     // ---- 問題文 ---------------------------------------------------------
