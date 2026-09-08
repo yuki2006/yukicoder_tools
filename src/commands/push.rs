@@ -61,37 +61,6 @@ fn push_one(client: &YukicoderClient, dir: &ProblemDir, options: Options) -> Res
         report(&res, "  問題");
     }
 
-    // ---- 部分点 (サブタスク) ----
-    // ファイルが無ければ触らない。設定を消すには subtasks = [] を明示する
-    // (ファイルを消しても設定は消さない。暗黙の削除をしないため)。
-    if dir.has_subtask() {
-        let subtasks = dir.read_subtask()?;
-        if options.dry_run {
-            println!(
-                "  PUT /v1/problems/{problem_id}/subtask ({} 件{})",
-                subtasks.subtasks.len(),
-                if subtasks.subtasks.is_empty() {
-                    " → 設定を消す"
-                } else {
-                    ""
-                }
-            );
-        } else {
-            let res = client.save_subtask(problem_id, &subtasks)?;
-            let message = res.message.trim();
-            println!(
-                "  サブタスク: {}",
-                if !message.is_empty() {
-                    message
-                } else if subtasks.subtasks.is_empty() {
-                    "設定を消しました"
-                } else {
-                    "保存しました"
-                }
-            );
-        }
-    }
-
     // ---- ジェネレータ ----
     if dir.has_generator() {
         let (config, source) = dir.read_generator()?;
@@ -152,6 +121,39 @@ fn push_one(client: &YukicoderClient, dir: &ProblemDir, options: Options) -> Res
         let allowed_chars = client.testcase_name_rule()?;
         for which in [Which::In, Which::Out] {
             testcases_changed |= push_testcases(client, dir, which, &allowed_chars, options)?;
+        }
+    }
+
+    // ---- 部分点 (サブタスク) ----
+    // テストケースの後に処理する (送ったテストケースに対して prefixes の
+    // 一致をサーバに判定させるため)。ファイルが無ければ触らない。設定を消す
+    // には subtasks = [] を明示する (ファイルを消しても設定は消さない。
+    // 暗黙の削除をしないため)。
+    if dir.has_subtask() {
+        let subtasks = dir.read_subtask()?;
+        if options.dry_run {
+            println!(
+                "  PUT /v1/problems/{problem_id}/subtask ({} 件{})",
+                subtasks.subtasks.len(),
+                if subtasks.subtasks.is_empty() {
+                    " → 設定を消す"
+                } else {
+                    ""
+                }
+            );
+        } else {
+            let res = client.save_subtask(problem_id, &subtasks)?;
+            let message = res.message.trim();
+            println!(
+                "  サブタスク: {}",
+                if !message.is_empty() {
+                    message
+                } else if subtasks.subtasks.is_empty() {
+                    "設定を消しました"
+                } else {
+                    "保存しました"
+                }
+            );
         }
     }
 
