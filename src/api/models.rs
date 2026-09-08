@@ -490,6 +490,17 @@ pub struct SubtaskSet {
     pub subtasks: Vec<Subtask>,
 }
 
+/// `PUT /v1/problems/{id}/subtask` のレスポンス。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SubtaskSaveResponse {
+    #[serde(default, rename = "Message")]
+    pub message: String,
+    /// 一致するテストケースが無いサブタスク (常に 0 点になる) があるときだけ
+    /// 入る。判定はサーバが保存時点のテストケース一覧に対して行う。
+    #[serde(default, rename = "Warning")]
+    pub warning: String,
+}
+
 /// `GET /v1/submissions/{id}` のレスポンス。
 ///
 /// 提出の状態。読むのは結果の表示に使うフィールドだけ。

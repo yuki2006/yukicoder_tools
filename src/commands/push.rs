@@ -154,6 +154,9 @@ fn push_one(client: &YukicoderClient, dir: &ProblemDir, options: Options) -> Res
                     "保存しました"
                 }
             );
+            if !res.warning.trim().is_empty() {
+                println!("  サブタスク: 警告 {}", res.warning.trim());
+            }
         }
     }
 

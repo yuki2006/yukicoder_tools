@@ -242,7 +242,11 @@ impl YukicoderClient {
     }
 
     /// サブタスクを保存する。空配列で設定を消す。
-    pub fn save_subtask(&self, problem_id: i64, req: &models::SubtaskSet) -> Result<SaveResponse> {
+    pub fn save_subtask(
+        &self,
+        problem_id: i64,
+        req: &models::SubtaskSet,
+    ) -> Result<models::SubtaskSaveResponse> {
         self.put_json(
             &format!("/v1/problems/{problem_id}/subtask"),
             req,
