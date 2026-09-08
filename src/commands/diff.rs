@@ -72,6 +72,16 @@ fn diff_one(client: &YukicoderClient, dir: &ProblemDir, testcases: bool) -> Resu
         differs |= print_text_diff("解説", &editorial.content, local_editorial.text());
     }
 
+    if dir.has_subtask() {
+        let remote_subtasks = client.get_subtask(problem_id)?;
+        let local_subtasks = dir.read_subtask()?;
+        differs |= print_text_diff(
+            "サブタスク",
+            &toml::to_string_pretty(&remote_subtasks)?,
+            &toml::to_string_pretty(&local_subtasks)?,
+        );
+    }
+
     if dir.has_generator() {
         let remote_generator = client.get_generator(problem_id)?;
         let (config, source) = dir.read_generator()?;

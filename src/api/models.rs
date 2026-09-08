@@ -463,6 +463,44 @@ pub struct Language {
     pub status: String,
 }
 
+/// 部分点 (サブタスク) の 1 件。`subtask.toml` にも同じキー名で保存する。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Subtask {
+    /// 表示名。省略可。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// テストケースの目印。ファイル名の最後の `_` より前を `_` で分割した
+    /// トークンのいずれかと一致すれば、そのサブタスクに含まれる
+    /// (判定はサーバが行う)。
+    pub prefixes: Vec<String>,
+    /// 配点 (%)。全サブタスクの合計が 100 でないとサーバが 400 を返す。
+    pub score: i64,
+    /// 補足。空なら送らない (GET→PUT で差分を出さないため)。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+}
+
+/// `GET` / `PUT /v1/problems/{id}/subtask` の本文。
+///
+/// 未設定でも GET は `subtasks: []` を返す (null ではない)。
+/// 空配列を PUT すると設定を消す。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SubtaskSet {
+    #[serde(default)]
+    pub subtasks: Vec<Subtask>,
+}
+
+/// `PUT /v1/problems/{id}/subtask` のレスポンス。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SubtaskSaveResponse {
+    #[serde(default, rename = "Message")]
+    pub message: String,
+    /// 一致するテストケースが無いサブタスク (常に 0 点になる) があるときだけ
+    /// 入る。判定はサーバが保存時点のテストケース一覧に対して行う。
+    #[serde(default, rename = "Warning")]
+    pub warning: String,
+}
+
 /// `GET /v1/submissions/{id}` のレスポンス。
 ///
 /// 提出の状態。読むのは結果の表示に使うフィールドだけ。
@@ -682,6 +720,48 @@ mod tests {
         assert_eq!(problem_type_label(6), Some("ショートコード"));
         assert_eq!(eps_mode_label("abs"), Some("絶対誤差"));
         assert_eq!(judge_type_label(9), None, "未知のコードは名前なし");
+    }
+
+    /// サブタスクは API と同じキー名で subtask.toml と往復できる。
+    /// 省略可のキーは空なら出さない (GET→PUT で差分を出さないため)。
+    #[test]
+    fn subtasks_round_trip_and_omit_empty_optionals() {
+        let set = SubtaskSet {
+            subtasks: vec![
+                Subtask {
+                    name: "サブタスク1".into(),
+                    prefixes: vec!["01".into()],
+                    score: 30,
+                    description: String::new(),
+                },
+                Subtask {
+                    name: String::new(),
+                    prefixes: vec!["02".into(), "03".into()],
+                    score: 70,
+                    description: "補足".into(),
+                },
+            ],
+        };
+
+        let json = serde_json::to_value(&set).unwrap();
+        assert!(json["subtasks"][0].get("description").is_none());
+        assert!(json["subtasks"][1].get("name").is_none());
+        assert_eq!(
+            json["subtasks"][1]["prefixes"],
+            serde_json::json!(["02", "03"])
+        );
+
+        let text = toml::to_string_pretty(&set).unwrap();
+        let parsed: SubtaskSet = toml::from_str(&text).unwrap();
+        assert_eq!(parsed, set);
+
+        // 空の設定 (= 消す) も往復できる。
+        let empty: SubtaskSet = toml::from_str("subtasks = []").unwrap();
+        assert!(empty.subtasks.is_empty());
+        assert_eq!(
+            serde_json::to_value(&empty).unwrap()["subtasks"],
+            serde_json::json!([])
+        );
     }
 
     /// problem.toml は API と同じキー名で往復できる。

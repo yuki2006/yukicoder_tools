@@ -3,6 +3,7 @@
 //! ```text
 //! problems/<問題ID>/
 //!   problem.toml            問題設定 (キー名は API と同じ)
+//!   subtask.json            部分点 (サブタスク)。TOML なら subtask.toml。無ければ触らない
 //!   statement.md            問題文 (HTML で管理する問題は statement.html)
 //!   editorial.md            解説 (HTML なら editorial.html)。無ければ触らない
 //!   judge/
@@ -28,10 +29,13 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::api::models::{
-    ProblemSettings, Statement, Which, EPS_MODE_LABELS, JUDGE_TYPE_LABELS, PROBLEM_TYPE_LABELS,
+    ProblemSettings, Statement, SubtaskSet, Which, EPS_MODE_LABELS, JUDGE_TYPE_LABELS,
+    PROBLEM_TYPE_LABELS,
 };
 
 pub const SETTINGS_FILE: &str = "problem.toml";
+pub const SUBTASK_FILE: &str = "subtask.toml";
+pub const SUBTASK_JSON_FILE: &str = "subtask.json";
 pub const GENERATOR_CONFIG_FILE: &str = "generator.toml";
 pub const JUDGE_CONFIG_FILE: &str = "judge.toml";
 pub const VALIDATOR_CONFIG_FILE: &str = "validator.toml";
@@ -170,6 +174,81 @@ impl ProblemDir {
             self.problem_id
         );
         write_text(&self.settings_path(), &text)
+    }
+
+    // ---- 部分点 (サブタスク) --------------------------------------------
+
+    /// 表示・案内に使う代表のパス (実在する方。無ければ JSON)。
+    pub fn subtask_path(&self) -> PathBuf {
+        match self.subtask_file() {
+            Ok(Some(path)) => path,
+            _ => self.root.join(SUBTASK_JSON_FILE),
+        }
+    }
+
+    pub fn has_subtask(&self) -> bool {
+        self.root.join(SUBTASK_FILE).is_file() || self.root.join(SUBTASK_JSON_FILE).is_file()
+    }
+
+    /// `subtask.toml` と `subtask.json` のどちらか一方だけを許す。
+    ///
+    /// 両方あるとどちらを送るか決められないので中止する (statement と同じ)。
+    fn subtask_file(&self) -> Result<Option<PathBuf>> {
+        let toml = self.root.join(SUBTASK_FILE);
+        let json = self.root.join(SUBTASK_JSON_FILE);
+        match (toml.is_file(), json.is_file()) {
+            (true, true) => bail!(
+                "サブタスクが {} と {} の両方にあります。どちらか一方だけにしてください。",
+                display_path(&toml),
+                display_path(&json)
+            ),
+            (true, false) => Ok(Some(toml)),
+            (false, true) => Ok(Some(json)),
+            (false, false) => Ok(None),
+        }
+    }
+
+    /// サブタスクを読む。`subtasks = []` は「設定を消す」の意味になる。
+    ///
+    /// JSON は API の本文 (`{"subtasks": [...]}`) と同じ形。
+    pub fn read_subtask(&self) -> Result<SubtaskSet> {
+        let Some(path) = self.subtask_file()? else {
+            bail!(
+                "サブタスクのファイルがありません ({} か {})",
+                display_path(self.root.join(SUBTASK_FILE)),
+                display_path(self.root.join(SUBTASK_JSON_FILE))
+            );
+        };
+        let text = read_text(&path)?;
+        let parsed = if path.extension().is_some_and(|ext| ext == "json") {
+            serde_json::from_str(&text).map_err(anyhow::Error::from)
+        } else {
+            toml::from_str(&text).map_err(anyhow::Error::from)
+        };
+        parsed.with_context(|| format!("{} を解釈できませんでした", display_path(&path)))
+    }
+
+    /// サブタスクを書く。ローカルにある方の形式に合わせ、無ければ JSON。
+    pub fn write_subtask(&self, subtasks: &SubtaskSet) -> Result<()> {
+        let existing = self.subtask_file()?;
+        if existing
+            .as_ref()
+            .is_some_and(|path| path.extension().is_some_and(|ext| ext == "toml"))
+        {
+            let body =
+                toml::to_string_pretty(subtasks).context("サブタスクを TOML にできませんでした")?;
+            let text = format!(
+                "# 部分点 (サブタスク)。キー名は PUT /api/v1/problems/{{id}}/subtask と同じ。\n\
+                 # prefixes はテストケース名の最後の _ より前を _ で分割したトークンに一致させる。\n\
+                 # score は配点 (%) で、全サブタスクの合計を 100 にする。\n\
+                 # subtasks = [] にして push すると設定を消す。\n\
+                 {body}"
+            );
+            return write_text(&self.root.join(SUBTASK_FILE), &text);
+        }
+        let body = serde_json::to_string_pretty(subtasks)
+            .context("サブタスクを JSON にできませんでした")?;
+        write_text(&self.root.join(SUBTASK_JSON_FILE), &format!("{body}\n"))
     }
 
     // ---- 問題文 ---------------------------------------------------------
@@ -681,6 +760,51 @@ mod tests {
             dir.write_settings(&settings).is_err(),
             "bool 以外の sync は黙って true 扱いにしない"
         );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// サブタスクは subtask.toml か subtask.json のどちらか一方。JSON は API の
+    /// 本文と同じ形で、書き戻しはローカルにある方の形式に合わせる。
+    #[test]
+    fn subtask_accepts_toml_or_json_but_not_both() {
+        use crate::api::models::Subtask;
+        let root =
+            std::env::temp_dir().join(format!("yuki-tool-subtask-format-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let dir = ProblemDir::new(root.clone(), 14009);
+        let set = SubtaskSet {
+            subtasks: vec![Subtask {
+                name: "S1".into(),
+                prefixes: vec!["01".into()],
+                score: 100,
+                description: String::new(),
+            }],
+        };
+
+        // 無ければ JSON で書く (API の本文と同じ形が既定)。
+        dir.write_subtask(&set).unwrap();
+        assert!(root.join(SUBTASK_JSON_FILE).is_file());
+        assert_eq!(dir.read_subtask().unwrap(), set);
+
+        // TOML だけがあるときは TOML で読み、書き戻しも TOML のまま。
+        fs::remove_file(root.join(SUBTASK_JSON_FILE)).unwrap();
+        fs::write(
+            root.join(SUBTASK_FILE),
+            "[[subtasks]]\nprefixes = [\"02\"]\nscore = 100\n",
+        )
+        .unwrap();
+        assert_eq!(dir.read_subtask().unwrap().subtasks[0].prefixes, ["02"]);
+        dir.write_subtask(&set).unwrap();
+        assert!(
+            !root.join(SUBTASK_JSON_FILE).is_file(),
+            "書き戻しで形式を変えない"
+        );
+        assert_eq!(dir.read_subtask().unwrap(), set);
+
+        // 両方あると、どちらを送るか決められないので止める。
+        fs::write(root.join(SUBTASK_JSON_FILE), r#"{"subtasks":[]}"#).unwrap();
+        assert!(dir.read_subtask().is_err());
         fs::remove_dir_all(&root).unwrap();
     }
 

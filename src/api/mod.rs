@@ -232,6 +232,28 @@ impl YukicoderClient {
         )
     }
 
+    // ---- 部分点 (サブタスク) --------------------------------------------
+
+    pub fn get_subtask(&self, problem_id: i64) -> Result<models::SubtaskSet> {
+        self.get_json(
+            &format!("/v1/problems/{problem_id}/subtask"),
+            "サブタスクの取得",
+        )
+    }
+
+    /// サブタスクを保存する。空配列で設定を消す。
+    pub fn save_subtask(
+        &self,
+        problem_id: i64,
+        req: &models::SubtaskSet,
+    ) -> Result<models::SubtaskSaveResponse> {
+        self.put_json(
+            &format!("/v1/problems/{problem_id}/subtask"),
+            req,
+            "サブタスクの保存",
+        )
+    }
+
     // ---- validator ------------------------------------------------------
 
     pub fn get_validator(&self, problem_id: i64) -> Result<ValidatorContent> {

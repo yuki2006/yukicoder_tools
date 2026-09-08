@@ -124,6 +124,42 @@ fn push_one(client: &YukicoderClient, dir: &ProblemDir, options: Options) -> Res
         }
     }
 
+    // ---- 部分点 (サブタスク) ----
+    // テストケースの後に処理する (送ったテストケースに対して prefixes の
+    // 一致をサーバに判定させるため)。ファイルが無ければ触らない。設定を消す
+    // には subtasks = [] を明示する (ファイルを消しても設定は消さない。
+    // 暗黙の削除をしないため)。
+    if dir.has_subtask() {
+        let subtasks = dir.read_subtask()?;
+        if options.dry_run {
+            println!(
+                "  PUT /v1/problems/{problem_id}/subtask ({} 件{})",
+                subtasks.subtasks.len(),
+                if subtasks.subtasks.is_empty() {
+                    " → 設定を消す"
+                } else {
+                    ""
+                }
+            );
+        } else {
+            let res = client.save_subtask(problem_id, &subtasks)?;
+            let message = res.message.trim();
+            println!(
+                "  サブタスク: {}",
+                if !message.is_empty() {
+                    message
+                } else if subtasks.subtasks.is_empty() {
+                    "設定を消しました"
+                } else {
+                    "保存しました"
+                }
+            );
+            if !res.warning.trim().is_empty() {
+                println!("  サブタスク: 警告 {}", res.warning.trim());
+            }
+        }
+    }
+
     // ---- validator ----
     // テストケースの後に処理する。テストケースを更新すると再検証が走るので、
     // ここでまとめて「送ったテストケースに対する結果」を 1 回の待ちで確認する。
