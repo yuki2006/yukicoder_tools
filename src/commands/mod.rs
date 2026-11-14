@@ -1,5 +1,7 @@
+pub mod ai_code;
 pub mod diff;
 pub mod languages;
+pub mod login;
 pub mod new;
 pub mod pull;
 pub mod push;

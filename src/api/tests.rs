@@ -249,3 +249,278 @@ fn does_not_retry_with_another_method() {
     assert!(err.to_string().contains("404"), "{err}");
     assert_eq!(server.join().unwrap(), vec!["PUT"]);
 }
+
+// ---- CLI ログインと AI生成コード置き場 -------------------------------------
+
+/// サーバが受け取ったリクエスト。
+pub(crate) struct Recorded {
+    pub method: String,
+    pub path: String,
+    pub authorization: Option<String>,
+    pub content_type: Option<String>,
+    pub body: String,
+}
+
+/// 決めた応答を順に返し、受け取ったリクエストを記録するサーバ。
+///
+/// 応答の数だけ接続を受けたら終わる (毎回 `Connection: close` で切る)。
+pub(crate) fn serve_sequence(
+    responses: Vec<(u16, &'static str)>,
+) -> (String, JoinHandle<Vec<Recorded>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let handle = std::thread::spawn(move || {
+        let mut seen = Vec::new();
+        for (status, payload) in responses {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).unwrap();
+            let mut parts = request_line.split(' ');
+            let method = parts.next().unwrap_or_default().to_string();
+            let path = parts.next().unwrap_or_default().to_string();
+
+            let mut length = 0usize;
+            let mut authorization = None;
+            let mut content_type = None;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line.trim().is_empty() {
+                    break;
+                }
+                let Some((name, value)) = line.split_once(':') else {
+                    continue;
+                };
+                let value = value.trim().to_string();
+                match name.to_ascii_lowercase().as_str() {
+                    "content-length" => length = value.parse().unwrap_or(0),
+                    "authorization" => authorization = Some(value),
+                    "content-type" => content_type = Some(value),
+                    _ => {}
+                }
+            }
+            let mut body = vec![0u8; length];
+            reader.read_exact(&mut body).unwrap();
+
+            write!(
+                stream,
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                payload.len()
+            )
+            .unwrap();
+            stream.flush().unwrap();
+
+            seen.push(Recorded {
+                method,
+                path,
+                authorization,
+                content_type,
+                body: String::from_utf8(body).unwrap(),
+            });
+        }
+        seen
+    });
+
+    (format!("http://{addr}"), handle)
+}
+
+const DEVICE_CODE_RESPONSE: &str = r#"{"device_code":"ydc_secret","user_code":"WDJB-MJHT",
+    "verification_uri":"https://yukicoder.me/device",
+    "verification_uri_complete":"https://yukicoder.me/device?user_code=WDJB-MJHT",
+    "expires_in":600,"interval":5}"#;
+
+/// scope は求めたときだけ送る (要らない権限を求めない)。認証は付けない。
+#[test]
+fn device_code_sends_scope_only_when_asked() {
+    let (base_url, server) = serve_sequence(vec![
+        (200, DEVICE_CODE_RESPONSE),
+        (200, DEVICE_CODE_RESPONSE),
+    ]);
+    let client = YukicoderClient::anonymous(base_url).unwrap();
+
+    let Ok(code) = client.device_code("yuki-tool", None) else {
+        panic!("device_code に失敗した");
+    };
+    assert_eq!(code.user_code, "WDJB-MJHT");
+    assert_eq!(code.device_code, "ydc_secret");
+    assert_eq!(code.expires_in, 600);
+    assert_eq!(code.interval, 5);
+    assert!(client.device_code("yuki-tool", Some("ai_code")).is_ok());
+
+    let requests = server.join().unwrap();
+    assert_eq!(requests[0].method, "POST");
+    assert_eq!(requests[0].path, "/v1/device/code");
+    assert_eq!(requests[0].authorization, None);
+    assert_eq!(
+        requests[0].content_type.as_deref(),
+        Some("application/x-www-form-urlencoded")
+    );
+    assert_eq!(requests[0].body, "client_name=yuki-tool");
+    assert_eq!(requests[1].body, "client_name=yuki-tool&scope=ai_code");
+}
+
+/// 知らない scope は 400 invalid_scope。理由をそのまま見せる。
+#[test]
+fn device_code_reports_invalid_scope() {
+    let (base_url, server) = serve_sequence(vec![(
+        400,
+        r#"{"error":"invalid_scope","error_description":"scope x は使えません"}"#,
+    )]);
+    let client = YukicoderClient::anonymous(base_url).unwrap();
+
+    let err = match client.device_code("yuki-tool", Some("x")) {
+        Ok(_) => panic!("invalid_scope なのに成功した"),
+        Err(err) => format!("{err:#}"),
+    };
+
+    assert!(err.contains("invalid_scope"), "{err}");
+    server.join().unwrap();
+}
+
+/// 解釈できないレスポンスでも、本文 (device_code やトークン) をエラーに出さない。
+#[test]
+fn device_responses_are_not_echoed_on_parse_errors() {
+    let (base_url, server) = serve_sequence(vec![
+        (200, r#"{"device_code":"ydc_secret"}"#),
+        (200, r#"{"access_token":"ysb_secret"}"#),
+    ]);
+    let client = YukicoderClient::anonymous(base_url).unwrap();
+
+    let code_err = match client.device_code("yuki-tool", None) {
+        Ok(_) => panic!("欠けたレスポンスを読めてしまった"),
+        Err(err) => format!("{err:#}"),
+    };
+    let token_err = match client.device_token("ydc_secret") {
+        Ok(_) => panic!("欠けたレスポンスを読めてしまった"),
+        Err(err) => format!("{err:#}"),
+    };
+
+    assert!(!code_err.contains("ydc_secret"), "{code_err}");
+    assert!(!token_err.contains("ysb_secret"), "{token_err}");
+    assert!(!token_err.contains("ydc_secret"), "{token_err}");
+    server.join().unwrap();
+}
+
+const AI_CODE_ITEM: &str = r#"{"id":7,"userId":10,"title":"segtree","lang":"C++23","size":3,
+    "updatedAt":"2026-11-15T12:00:00+09:00","url":"/users/10/ai_code/7",
+    "rawUrl":"/users/10/ai_code/7/raw"}"#;
+
+/// 投稿は POST、差し替えは PUT、タイトル・言語だけの変更は PATCH。
+/// どれも JSON で、Bearer を付ける。PATCH は指定したものだけを送る
+/// (未知のフィールドはサーバがエラーにする)。
+#[test]
+fn ai_code_writes_use_the_documented_methods() {
+    use super::ai_code::{AiCodeInput, AiCodeLabel};
+
+    let (base_url, server) = serve_sequence(vec![
+        (201, AI_CODE_ITEM),
+        (200, AI_CODE_ITEM),
+        (200, AI_CODE_ITEM),
+    ]);
+    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+    let input = AiCodeInput {
+        title: "segtree".into(),
+        lang: "C++23".into(),
+        source: "abc".into(),
+    };
+
+    let created = client.create_ai_code(&input).unwrap();
+    assert_eq!(created.id, 7);
+    assert_eq!(created.user_id, 10);
+    assert_eq!(created.updated_at, "2026-11-15T12:00:00+09:00");
+    assert!(created.source.is_none());
+    client.update_ai_code(7, &input).unwrap();
+    client
+        .label_ai_code(
+            7,
+            &AiCodeLabel {
+                title: None,
+                lang: Some("Rust".into()),
+            },
+        )
+        .unwrap();
+
+    let requests = server.join().unwrap();
+    let seen: Vec<(&str, &str)> = requests
+        .iter()
+        .map(|r| (r.method.as_str(), r.path.as_str()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("POST", "/v1/ai_code"),
+            ("PUT", "/v1/ai_code/7"),
+            ("PATCH", "/v1/ai_code/7")
+        ]
+    );
+    for request in &requests {
+        assert_eq!(request.authorization.as_deref(), Some("Bearer dummy-token"));
+        assert_eq!(request.content_type.as_deref(), Some("application/json"));
+    }
+    let body = r#"{"title":"segtree","lang":"C++23","source":"abc"}"#;
+    assert_eq!(requests[0].body, body);
+    assert_eq!(requests[1].body, body);
+    assert_eq!(requests[2].body, r#"{"lang":"Rust"}"#);
+}
+
+/// 読むのは認証不要なので、トークンを持っていても付けない。
+#[test]
+fn ai_code_reads_do_not_send_the_token() {
+    let (base_url, server) = serve_sequence(vec![
+        (200, "[]"),
+        (
+            200,
+            r#"{"id":7,"userId":10,"title":"t","lang":"l","size":3,
+               "updatedAt":"2026-11-15T12:00:00+09:00","source":"abc"}"#,
+        ),
+        (200, "[]"),
+    ]);
+    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+
+    assert!(client.user_ai_codes(10).unwrap().is_empty());
+    assert_eq!(
+        client.user_ai_code(10, 7).unwrap().source.as_deref(),
+        Some("abc")
+    );
+    // 自分の一覧は認証が要る。
+    assert!(client.my_ai_codes().unwrap().is_empty());
+
+    let requests = server.join().unwrap();
+    assert_eq!(requests[0].path, "/v1/users/10/ai_code");
+    assert_eq!(requests[0].authorization, None);
+    assert_eq!(requests[1].path, "/v1/users/10/ai_code/7");
+    assert_eq!(requests[1].authorization, None);
+    assert_eq!(requests[2].path, "/v1/ai_code");
+    assert_eq!(
+        requests[2].authorization.as_deref(),
+        Some("Bearer dummy-token")
+    );
+}
+
+/// 401 は型で見分けられる (保存したログインを消してやり直す判断に使う)。
+/// メッセージにはサーバの案内が入る。
+#[test]
+fn unauthorized_is_detectable() {
+    let (base_url, server) = serve_sequence(vec![
+        (
+            401,
+            r#"{"error":"scope=ai_code を付けて受け取り直してください"}"#,
+        ),
+        (404, r#"{"error":"コードが見つかりません"}"#),
+    ]);
+    let client = YukicoderClient::new("dummy-token".into(), base_url).unwrap();
+
+    let unauthorized = client.my_ai_codes().unwrap_err();
+    let not_found = client.my_ai_codes().unwrap_err();
+
+    assert!(super::is_unauthorized(&unauthorized));
+    assert!(format!("{unauthorized:#}").contains("scope=ai_code"));
+    assert!(!super::is_unauthorized(&not_found));
+    // with_context で包んでも見分けられる。
+    assert!(super::is_unauthorized(&unauthorized.context("包んだ")));
+    server.join().unwrap();
+}
