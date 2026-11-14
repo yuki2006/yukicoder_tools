@@ -1,10 +1,12 @@
 //! `yuki-tool` — Git リポジトリから yukicoder の問題を管理する CLI。
 //!
-//! トークンは環境変数か `.env` からだけ読む (コマンドライン引数では渡さない)。
+//! トークンは環境変数か `.env`、または `yuki-tool login` で保存したログインから
+//! 読む (コマンドライン引数では渡さない)。
 
 mod api;
 mod commands;
 mod config;
+mod credentials;
 mod local;
 
 use anyhow::Result;
@@ -23,7 +25,8 @@ pub const EXIT_DIFF: i32 = 2;
     long_about = "yukicoder の公開 API を使って、問題設定・問題文・テストケース・\
 ジェネレータ・ジャッジコード・validator・解説をローカルのファイルと同期する。\n\
 トークンは環境変数 (YUKICODER_TOKEN_<問題ID> / YUKICODER_TOKEN / YUKICODER_API_KEY) \
-か、リポジトリ直下の .env から読む。"
+か、リポジトリ直下の .env から読む。\n\
+提出と AI生成コード置き場は、`yuki-tool login` でブラウザから許可したログインでも使える。"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -107,6 +110,30 @@ enum Command {
         #[arg(long)]
         problem_id: Option<i64>,
     },
+    /// ブラウザで許可して、提出専用のトークンを受け取る (24 時間有効)
+    ///
+    /// API キーや編集トークンを設定しなくても `submit` が使えるようになる。
+    /// 表示される URL をブラウザで開き、コードを確かめて許可する。
+    Login {
+        /// AI生成コード置き場 (`ai-code`) の権限も求める
+        #[arg(long)]
+        ai_code: bool,
+        /// ブラウザを自動で開かない (URL の表示だけ)
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// 保存したログインを消す
+    Logout,
+    /// 誰としてログインしているかを確かめる
+    Whoami,
+    /// AI生成コード置き場を操作する
+    ///
+    /// 書き込みには `yuki-tool login --ai-code` のログインか、アカウントの API キー (YUKICODER_API_KEY) が要る。
+    /// 削除は API ではできないので、間違えないようにサイトから行ってください。
+    AiCode {
+        #[command(subcommand)]
+        command: AiCodeCommand,
+    },
     /// テストケースの一覧を表示する
     Testcases {
         #[command(flatten)]
@@ -120,6 +147,70 @@ enum Command {
         /// 現在使えない言語も表示する
         #[arg(long)]
         include_disabled: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AiCodeCommand {
+    /// 一覧を表示する (省略時は自分の投稿)
+    List {
+        /// このユーザー ID の投稿を表示する (認証不要)
+        #[arg(long, value_parser = clap::value_parser!(i64).range(1..))]
+        user: Option<i64>,
+    },
+    /// 1 件のコードを表示する (省略時は自分の投稿)
+    Show {
+        /// コードの ID (`ai-code list` で確認)
+        #[arg(value_parser = clap::value_parser!(i64).range(1..))]
+        id: i64,
+        /// このユーザー ID の投稿を表示する (認証不要)
+        #[arg(long, value_parser = clap::value_parser!(i64).range(1..))]
+        user: Option<i64>,
+        /// コードをこのファイルに書き出す (省略時は標準出力)
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+    },
+    /// コードを投稿する
+    Post {
+        /// タイトル
+        #[arg(short, long)]
+        title: String,
+        /// 言語 (自由な文字列。yukicoder の言語 ID でなくてよい。例: C++23)
+        #[arg(short, long)]
+        lang: String,
+        /// 投稿するファイル
+        #[arg(short, long)]
+        file: std::path::PathBuf,
+    },
+    /// コードを差し替える (更新日時が新しくなる)
+    Update {
+        /// コードの ID (`ai-code list` で確認)
+        #[arg(value_parser = clap::value_parser!(i64).range(1..))]
+        id: i64,
+        /// 差し替えるファイル
+        #[arg(short, long)]
+        file: std::path::PathBuf,
+        /// タイトル (省略時は今のまま)
+        #[arg(short, long)]
+        title: Option<String>,
+        /// 言語 (省略時は今のまま)
+        #[arg(short, long)]
+        lang: Option<String>,
+    },
+    /// タイトル・言語だけを変える (更新日時は変わらない)
+    Label {
+        /// コードの ID (`ai-code list` で確認)
+        #[arg(value_parser = clap::value_parser!(i64).range(1..))]
+        id: i64,
+        #[arg(short, long)]
+        title: Option<String>,
+        #[arg(short, long)]
+        lang: Option<String>,
+    },
+    /// 削除は API ではできない (サイトから行う案内を出す)
+    Delete {
+        /// コードの ID (何も消さない)
+        id: Option<String>,
     },
 }
 
@@ -182,6 +273,29 @@ fn run() -> Result<()> {
             delete,
             problem_id,
         } => commands::submit::set_solution(submission_id, summary, delete, problem_id),
+        Command::Login {
+            ai_code,
+            no_browser,
+        } => commands::login::run(ai_code, no_browser),
+        Command::Logout => commands::login::logout(),
+        Command::Whoami => commands::login::whoami(),
+        Command::AiCode { command } => match command {
+            AiCodeCommand::List { user } => commands::ai_code::list(user),
+            AiCodeCommand::Show { id, user, output } => {
+                commands::ai_code::show(id, user, output.as_deref())
+            }
+            AiCodeCommand::Post { title, lang, file } => {
+                commands::ai_code::post(title, lang, &file)
+            }
+            AiCodeCommand::Update {
+                id,
+                file,
+                title,
+                lang,
+            } => commands::ai_code::update(id, &file, title, lang),
+            AiCodeCommand::Label { id, title, lang } => commands::ai_code::label(id, title, lang),
+            AiCodeCommand::Delete { .. } => commands::ai_code::delete(),
+        },
         Command::Testcases { target, which } => commands::testcases::list(&target, which),
         Command::Languages { include_disabled } => commands::languages::run(include_disabled),
     }

@@ -22,6 +22,8 @@ main にマージされた内容を GitHub Actions が yukicoder へ反映する
 | `yuki-tool push [問題ID]` | ローカルの内容を yukicoder に反映する (`--dry-run` / `--prune` / `--generate`) |
 | `yuki-tool submit --file <ファイル> --lang <言語ID>` | ソースを提出し、ジャッジの結果を待つ (`--no-wait` で待たない) |
 | `yuki-tool solution <提出ID> --summary "..."` | AC した提出を解説ページの「想定解」に登録する (`--delete` で解除) |
+| `yuki-tool login [--ai-code]` | ブラウザで許可して、提出専用のトークンを受け取る (`logout` で手元の保存を消す、`whoami` で確認) |
+| `yuki-tool ai-code list` / `show` / `post` / `update` / `label` | AI生成コード置き場を操作する |
 | `yuki-tool testcases` | yukicoder 側のテストケース一覧を表示する |
 | `yuki-tool languages` | 提出・ジェネレータで使う言語 ID の一覧 |
 
@@ -76,6 +78,51 @@ YUKICODER_TOKEN_20000=ypt_...
 
 ローカルでは `.env.example` を `.env` にコピーして使ってください。`.env` は `.gitignore` 済みです。
 GitHub Actions では Secrets に `YUKICODER_TOKEN` を登録し、ジョブの `env` に渡します。
+
+### ブラウザでログインする (`login`)
+
+トークンを発行して `.env` に書く代わりに、ブラウザで許可するだけで**提出専用のトークン**
+(`ysb_...`) を受け取れます (OAuth 2.0 のデバイス認可。サーバ側の説明は
+[CLI ツールからのログインと提出](https://yukicoder.me/help/cli))。
+
+```sh
+yuki-tool login             # 提出だけ
+yuki-tool login --ai-code   # 提出に加えて、AI生成コード置き場も
+```
+
+表示された URL をブラウザで開き、画面のコードが端末のものと同じことを確かめて許可します
+(ブラウザは自動で開きます。`--no-browser` で URL の表示だけにできます)。
+
+- このトークンで使えるのは `submit` と、`--ai-code` を付けたときの `ai-code` だけです。
+  `pull` / `push` / `diff` / `solution` には、上の編集トークンか API キーが要ります。
+- `submit` は、環境変数にも `.env` にもトークンが無いときにこのログインを使います。
+  提出専用トークンでは提出の状態を読めないので、ジャッジの結果は待ちません。
+- 有効期間は 24 時間です。切れたら `yuki-tool login` をやり直します。
+- トークンは利用者の設定ディレクトリ (Windows は `%APPDATA%\yuki-tool\login.json`、
+  それ以外は `$XDG_CONFIG_HOME/yuki-tool/login.json`、無ければ `~/.config/yuki-tool/login.json`)
+  に保存し、画面やログには出しません。Unix ではパーミッションを 600 にします。
+- `yuki-tool logout` は手元の保存を消すだけです。トークン自体を失効させるには
+  <https://yukicoder.me/device> を開きます。
+
+## AI生成コード置き場 (`ai-code`)
+
+生成 AI で作ったコードをコンテストより前に公開しておく置き場
+(`https://yukicoder.me/users/<ユーザーID>/ai_code`) を操作します。
+
+```sh
+yuki-tool ai-code list                                   # 自分の投稿の一覧
+yuki-tool ai-code post -t "segtree" -l "C++23" -f a.cpp  # 投稿する
+yuki-tool ai-code update <ID> -f a.cpp                   # コードを差し替える (更新日時が新しくなる)
+yuki-tool ai-code label <ID> -t "新しいタイトル"          # タイトル・言語だけ変える (更新日時は変わらない)
+yuki-tool ai-code show <ID> > a.cpp                      # コードを取り出す
+yuki-tool ai-code list --user <ユーザーID>                # 他の人の投稿 (認証不要)
+```
+
+- 認証は、`yuki-tool login --ai-code` のログイン (期限内のもの) があればそれを、
+  無ければアカウントの API キー (`YUKICODER_API_KEY`) を使います。問題の編集トークンは使えません。
+- `--lang` は自由な文字列で、yukicoder の言語 ID でなくて構いません。
+- `update` で `-t` / `-l` を省くと、今のタイトル・言語のまま差し替えます。
+- **削除は API ではできません。** 間違えて消さないように、サイトから行ってください。
 
 ## ディレクトリ構成
 
@@ -224,8 +271,9 @@ WebUI で編集した内容を取り込む手段は 2 つ用意しています�
 
 実際の API の挙動に合わせています。
 
-- **書き込みはすべて PUT です。** 問題・ジェネレータ・ジャッジコード・validator・解説・
+- **問題まわりの書き込みはすべて PUT です。** 問題・ジェネレータ・ジャッジコード・validator・解説・
   想定解の保存が対象です。失敗しても別のメソッドで送り直しません (原因の分からない失敗になるため)。
+  AI生成コード置き場だけは、投稿が POST、差し替えが PUT、タイトル・言語の変更が PATCH です。
 - サーバ側には送ったキーだけを更新する `PATCH /edit` もあります。本ツールの `push` は
   リポジトリの内容で全置換する使い方なので PUT を使っています。
 - **問題文の `html` と `markdown` は排他。** サーバは `html` が非空ならそれをそのまま保存し、

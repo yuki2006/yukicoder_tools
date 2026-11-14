@@ -1,13 +1,16 @@
 //! yukicoder 公開 API のクライアント。
 //!
 //! 認証はすべて `Authorization: Bearer <token>`。トークンはアカウントの API
-//! キーか、問題ごとの編集トークン (`ypt_...`)。
+//! キーか、問題ごとの編集トークン (`ypt_...`)、`yuki-tool login` で受け取る
+//! 提出専用トークン (`ysb_...`) のどれか。
 
+pub mod ai_code;
 pub mod body;
+pub mod device;
 pub mod models;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::blocking::{Client, RequestBuilder, Response};
@@ -22,7 +25,35 @@ use models::{
     SaveResponse, SolutionRequest, UploadResponse, ValidatorContent, ValidatorRequest, Which,
 };
 
+/// サイトの URL。画面 (AI生成コード置き場など) の URL を組み立てるときに使う。
+pub const SITE_URL: &str = "https://yukicoder.me";
+
 pub const DEFAULT_BASE_URL: &str = "https://yukicoder.me/api";
+
+/// API が成功以外のステータスを返したときのエラー。
+///
+/// 呼び出し側がステータスで分岐できるように型を分けている (保存したログインが
+/// 401 になったら消してやり直してもらう、など)。表示はメッセージそのまま。
+#[derive(Debug)]
+pub struct HttpError {
+    pub status: u16,
+    message: String,
+}
+
+impl std::fmt::Display for HttpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for HttpError {}
+
+/// エラーの原因をたどって、API が 401 を返したものかを調べる。
+pub fn is_unauthorized(err: &anyhow::Error) -> bool {
+    err.chain()
+        .filter_map(|cause| cause.downcast_ref::<HttpError>())
+        .any(|http| http.status == StatusCode::UNAUTHORIZED.as_u16())
+}
 
 const USER_AGENT: &str = concat!("yukicoder-tools/", env!("CARGO_PKG_VERSION"));
 
@@ -89,7 +120,7 @@ impl YukicoderClient {
             StatusCode::FORBIDDEN => {
                 "\nヒント: 編集権限が無いか、入力の検証エラーです (本文を確認してください)。"
             }
-            StatusCode::NOT_FOUND => "\nヒント: 問題 ID かファイル名を確認してください。",
+            StatusCode::NOT_FOUND => "\nヒント: ID かファイル名を確認してください。",
             // 例: ジャッジコードの削除でサーバがファイルを消せなかった場合。
             // サーバ側は登録を消さずにエラーを返すので、そのまま再実行できる。
             s if s.is_server_error() => {
@@ -98,7 +129,7 @@ impl YukicoderClient {
             }
             _ => "",
         };
-        bail!(
+        let message = format!(
             "{what} に失敗しました (HTTP {}){hint}{}",
             status.as_u16(),
             if body.is_empty() {
@@ -107,6 +138,11 @@ impl YukicoderClient {
                 format!("\nレスポンス: {body}")
             }
         );
+        Err(HttpError {
+            status: status.as_u16(),
+            message,
+        }
+        .into())
     }
 
     fn get_json<T: DeserializeOwned>(&self, path: &str, what: &str) -> Result<T> {
@@ -147,15 +183,26 @@ impl YukicoderClient {
 
     /// 書き込み系 API を呼ぶ。
     ///
-    /// 書き込みはすべて PUT。
+    /// 問題まわりの書き込みはすべて PUT。
     fn put_json<B: Serialize, T: DeserializeOwned>(
         &self,
         path: &str,
         body: &B,
         what: &str,
     ) -> Result<T> {
+        self.write_json(Method::PUT, path, body, what)
+    }
+
+    /// JSON を送って、JSON のレスポンスを読む。
+    fn write_json<B: Serialize, T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: &B,
+        what: &str,
+    ) -> Result<T> {
         let res = self
-            .send_json(Method::PUT, path, body)
+            .send_json(method, path, body)
             .with_context(|| format!("{what} のリクエストを送信できませんでした"))?;
         Self::parse_json(res, what)
     }

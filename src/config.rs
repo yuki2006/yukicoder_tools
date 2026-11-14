@@ -254,28 +254,53 @@ pub fn load_dotenv(path: &Path) -> Result<HashMap<String, String>> {
 ///
 /// それぞれ環境変数を先に見て、無ければ `.env` を見る。既定値は持たない。
 pub fn resolve_token(repo_root: &Path, problem_id: i64) -> Result<String> {
-    let keys = token_keys(problem_id);
+    match find_token(repo_root, problem_id)? {
+        Some(token) => Ok(token),
+        None => bail!(
+            "トークンが見つかりません。次のいずれかを環境変数か {DOTENV_FILE} に設定してください: {}\n\
+             GitHub Actions では Secrets を env に渡してください (例: YUKICODER_TOKEN: ${{{{ secrets.YUKICODER_TOKEN }}}})。",
+            token_keys(problem_id).join(", ")
+        ),
+    }
+}
+
+/// [`resolve_token`] と同じ順で探し、どれも無ければ `None` を返す。
+///
+/// 無いときに `yuki-tool login` のログインへ回せるコマンド (`submit`) 用。
+pub fn find_token(repo_root: &Path, problem_id: i64) -> Result<Option<String>> {
+    lookup(repo_root, &token_keys(problem_id))
+}
+
+/// アカウントの API キー (`YUKICODER_API_KEY`) を環境変数と `.env` から探す。
+///
+/// 問題に紐づかない API (AI生成コード置き場) 用。問題の編集トークンは使えない
+/// ので、`YUKICODER_TOKEN` は見ない。
+pub fn find_api_key(repo_root: &Path) -> Result<Option<String>> {
+    lookup(repo_root, &[API_KEY.to_string()])
+}
+
+/// キーを順に、環境変数と `.env` から探す。
+fn lookup(repo_root: &Path, keys: &[String]) -> Result<Option<String>> {
     // .env が壊れていても、環境変数でトークンが決まるなら止めない。
     // 環境変数が優先という順序を、.env のパースエラーで覆さないため。
     let (dotenv, dotenv_error) = match load_dotenv(&repo_root.join(DOTENV_FILE)) {
         Ok(vars) => (vars, None),
         Err(err) => (HashMap::new(), Some(err)),
     };
-    if let Some(token) = select_token(&keys, |key| std::env::var(key).ok(), &dotenv) {
+    if let Some(token) = select_token(keys, |key| std::env::var(key).ok(), &dotenv) {
         if let Some(err) = dotenv_error {
             eprintln!("警告: {err:#}。環境変数のトークンを使います。");
         }
-        return Ok(token);
+        return Ok(Some(token));
     }
-    if let Some(err) = dotenv_error {
-        return Err(err);
+    match dotenv_error {
+        Some(err) => Err(err),
+        None => Ok(None),
     }
-    bail!(
-        "トークンが見つかりません。次のいずれかを環境変数か {DOTENV_FILE} に設定してください: {}\n\
-         GitHub Actions では Secrets を env に渡してください (例: YUKICODER_TOKEN: ${{{{ secrets.YUKICODER_TOKEN }}}})。",
-        keys.join(", ")
-    )
 }
+
+/// アカウントの API キーを入れるキー。
+pub const API_KEY: &str = "YUKICODER_API_KEY";
 
 /// 探すキーを優先順に並べる。
 ///
@@ -286,7 +311,7 @@ fn token_keys(problem_id: i64) -> Vec<String> {
     vec![
         format!("YUKICODER_TOKEN_{problem_id}"),
         "YUKICODER_TOKEN".to_string(),
-        "YUKICODER_API_KEY".to_string(),
+        API_KEY.to_string(),
     ]
 }
 

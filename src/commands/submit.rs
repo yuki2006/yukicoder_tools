@@ -3,11 +3,13 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result};
+use anyhow::{bail, Context as _, Result};
 
 use crate::api::models::{judging_ids, SolutionRequest};
-use crate::api::YukicoderClient;
+use crate::api::{YukicoderClient, DEFAULT_BASE_URL};
+use crate::commands::login::{self, Saved};
 use crate::commands::Context;
+use crate::config;
 use crate::local::{display_path, read_text};
 
 pub fn run(problem_id: Option<i64>, file: &Path, lang: &str, wait: bool) -> Result<()> {
@@ -18,13 +20,35 @@ pub fn run(problem_id: Option<i64>, file: &Path, lang: &str, wait: bool) -> Resu
         anyhow::bail!("{} が空です", display_path(file));
     }
 
-    let client = ctx.client(problem_id)?;
+    // 環境変数・.env のトークンが無ければ、`yuki-tool login` のログインを使う。
+    let (client, login_path) = match config::find_token(&ctx.repo.root, problem_id)? {
+        Some(token) => (YukicoderClient::new(token, DEFAULT_BASE_URL)?, None),
+        None => match login::saved()? {
+            (path, Saved::Valid(saved)) => (
+                YukicoderClient::new(saved.access_token, DEFAULT_BASE_URL)?,
+                Some(path),
+            ),
+            (_, Saved::Expired) => {
+                bail!("ログインの期限が切れています。`yuki-tool login` をやり直してください。")
+            }
+            (_, Saved::Missing) => bail!(
+                "トークンが見つかりません。`yuki-tool login` でログインするか、編集トークン・\
+                 API キーを環境変数か {} に設定してください (README の「トークン」)。",
+                config::DOTENV_FILE
+            ),
+        },
+    };
     println!(
         "問題 {problem_id} に {} を提出しています ({lang}, {} バイト)",
         display_path(file),
         source.len()
     );
-    let response = client.submit(problem_id, lang, source)?;
+    let response = client
+        .submit(problem_id, lang, source)
+        .map_err(|err| match &login_path {
+            Some(path) => login::relogin_on_unauthorized(err, path, "yuki-tool login"),
+            None => err,
+        })?;
     let response = response.trim();
 
     let Some(id) = submission_id(response) else {
@@ -35,6 +59,13 @@ pub fn run(problem_id: Option<i64>, file: &Path, lang: &str, wait: bool) -> Resu
         "提出しました: 提出 ID {id}\n結果は https://yukicoder.me/submissions/{id} で確認できます。"
     );
 
+    if login_path.is_some() {
+        // 提出専用トークンで使えるのは提出と本人確認だけで、提出の状態は読めない。
+        if wait {
+            println!("ログインのトークンでは結果を取得できないので、ジャッジは待ちません。");
+        }
+        return Ok(());
+    }
     if wait {
         match wait_for_judge(&client, id)? {
             Some(result) => println!(
